@@ -173,7 +173,7 @@ function NewSessionDialog({ userId, onCreated }: { userId: string; onCreated: (i
       .select("id")
       .single();
     setBusy(false);
-    if (error) return toast.error(error.message);
+    if (error) { toast.error(error.message); return; }
     setOpen(false);
     onCreated(data.id);
   };

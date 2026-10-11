@@ -37,7 +37,7 @@ function InterviewerRoom() {
   const { user } = Route.useRouteContext();
   const [s, setS] = useState(initial);
   const me: Peer = useMemo(
-    () => ({ id: user.id, name: (user.email ?? "Interviewer").split("@")[0], role: "interviewer", color: colorFor(user.id) }),
+    () => ({ id: user.id, name: (user.email ?? "Interviewer").split("@")[0] ?? "Interviewer", role: "interviewer", color: colorFor(user.id) }),
     [user.id, user.email],
   );
 
