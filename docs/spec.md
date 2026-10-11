@@ -27,7 +27,8 @@ combina PostgreSQL con autenticación, API y comunicación en tiempo real. Por
 eso `openapi.yaml` describe las rutas que usa su cliente JavaScript: Auth,
 PostgREST, funciones RPC y Realtime. El backend FastAPI local reproduce esas
 rutas y formatos con datos en memoria; así el frontend puede cambiar de servidor
-mediante `frontend/.env.local`, sin reescribir sus llamadas. La configuración
+mediante `frontend/.env.development`, sin reescribir sus llamadas. Un archivo
+local `frontend/.env.local`, si existe, tiene prioridad. La configuración
 original de datos en `drizzle/` y `supabase/` continúa en la raíz.
 
 ## Por qué escribimos el contrato antes del backend
