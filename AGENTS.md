@@ -8,3 +8,17 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+## Backend
+
+Use `uv` for dependency management. Useful commands:
+
+```sh
+uv sync
+uv add <PACKAGE-NAME>
+uv run python <PYTHON-FILE>
+```
+
+## Git
+
+Commit code regularly.

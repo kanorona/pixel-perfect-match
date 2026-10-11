@@ -19,6 +19,10 @@ Prefer working locally? You need Node.js and npm — [install with nvm](https://
 ```sh
 git clone <this-repository-url>
 cd <repository-name>
+cd frontend
 npm i
 npm run dev
 ```
+
+The frontend's current backend contract is in [`openapi.yaml`](openapi.yaml),
+with a short pointer in [`docs/spec.md`](docs/spec.md).

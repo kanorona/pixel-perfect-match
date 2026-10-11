@@ -1,0 +1,610 @@
+openapi: 3.1.0
+info:
+  title: Blueprint frontend backend contract
+  version: 0.1.0
+  description: |
+    Contract inferred from frontend/src. The current frontend calls Supabase Auth,
+    PostgREST, two SQL RPC functions, and Supabase Realtime directly; it does not
+    call a custom backend service. Paths below are Supabase wire paths, not new
+    application routes. SUPABASE_URL (VITE_SUPABASE_URL in the browser) is the base URL.
+    Every HTTP request carries the publishable key in the apikey header. Interviewer
+    table operations additionally require a user access token. The candidate RPCs
+    accept the secret invitation token in the JSON body and do not require a user
+    access token. Do not expose the service-role key to the browser.
+servers:
+  - url: https://example.supabase.co
+    description: Replace with SUPABASE_URL / VITE_SUPABASE_URL.
+security:
+  - apiKey: []
+paths:
+  /auth/v1/signup:
+    post:
+      tags: [Auth]
+      summary: Create an interviewer account
+      description: The frontend sends an email confirmation redirect to /dashboard.
+      operationId: signUp
+      parameters:
+        - name: redirect_to
+          in: query
+          required: false
+          description: Absolute frontend URL ending in /dashboard.
+          schema: { type: string, format: uri }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignUpRequest' }
+      responses:
+        '200':
+          description: User created; session may be null while email confirmation is pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SignUpResponse' }
+        '400': { $ref: '#/components/responses/ApiError' }
+
+  /auth/v1/token:
+    post:
+      tags: [Auth]
+      summary: Sign in or refresh a session
+      operationId: issueToken
+      parameters:
+        - name: grant_type
+          in: query
+          required: true
+          schema: { type: string, enum: [password, refresh_token] }
+          description: password is used by signInWithPassword; refresh_token by automatic session refresh.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/PasswordCredentials'
+                - $ref: '#/components/schemas/RefreshCredentials'
+      responses:
+        '200':
+          description: Authenticated session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSession' }
+        '400': { $ref: '#/components/responses/ApiError' }
+
+  /auth/v1/user:
+    get:
+      tags: [Auth]
+      summary: Validate the current interviewer and fetch their profile
+      operationId: getUser
+      security:
+        - apiKey: []
+          bearerAuth: []
+      responses:
+        '200':
+          description: Current user; the frontend reads id and email.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthUser' }
+        '401': { $ref: '#/components/responses/ApiError' }
+
+  /auth/v1/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out the current interviewer
+      operationId: signOut
+      security:
+        - apiKey: []
+          bearerAuth: []
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [global], default: global }
+      responses:
+        '204': { description: Session revoked; no response body. }
+        '401': { $ref: '#/components/responses/ApiError' }
+
+  /rest/v1/interview_sessions:
+    get:
+      tags: [Sessions]
+      summary: List the interviewer's sessions or fetch one by ID
+      description: |
+        The dashboard requests a selected field list ordered by updated_at.desc and
+        expects an array. The room loader requests select=* with id=eq.<uuid> and
+        Accept: application/vnd.pgrst.object+json, expecting one Session object.
+        Row-level security restricts results to owner_id = authenticated user ID.
+      operationId: getSessions
+      security:
+        - apiKey: []
+          bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Select'
+        - $ref: '#/components/parameters/OptionalIdFilter'
+        - name: order
+          in: query
+          required: false
+          schema: { type: string, enum: [updated_at.desc] }
+        - name: Accept
+          in: header
+          required: false
+          description: application/vnd.pgrst.object+json requests a single object.
+          schema: { type: string }
+      responses:
+        '200':
+          description: A list, or a single row when object media type is requested.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items: { $ref: '#/components/schemas/SessionSummary' }
+                  - $ref: '#/components/schemas/Session'
+            application/vnd.pgrst.object+json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '406': { $ref: '#/components/responses/ApiError' }
+    post:
+      tags: [Sessions]
+      summary: Create or duplicate a session
+      description: |
+        The frontend sends owner_id from the signed-in user. A duplicate also sends
+        the original canvas. The server supplies id, status=draft, candidate_token,
+        timestamps, and other defaults. RLS must enforce owner_id = token subject.
+      operationId: createSession
+      security:
+        - apiKey: []
+          bearerAuth: []
+      parameters:
+        - name: select
+          in: query
+          required: true
+          schema: { type: string, enum: [id] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionCreate' }
+      responses:
+        '201':
+          description: Created session ID, requested with Prefer return=representation and object Accept.
+          content:
+            application/vnd.pgrst.object+json:
+              schema: { $ref: '#/components/schemas/SessionId' }
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionId' }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+    patch:
+      tags: [Sessions]
+      summary: Change session state, invitation link, edit lock, or canvas
+      description: |
+        State changes request select=* and a single Session object. Interviewer
+        canvas autosaves omit select and do not consume a response body. The backend
+        updates updated_at on each change and restricts changes to the owner.
+      operationId: updateSession
+      security:
+        - apiKey: []
+          bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdFilter'
+        - $ref: '#/components/parameters/Select'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionPatch' }
+      responses:
+        '200':
+          description: Updated row when select=* and representation are requested.
+          content:
+            application/vnd.pgrst.object+json:
+              schema: { $ref: '#/components/schemas/Session' }
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '204': { description: Update accepted without a response body, as for canvas autosave. }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+    delete:
+      tags: [Sessions]
+      summary: Delete one owned session
+      operationId: deleteSession
+      security:
+        - apiKey: []
+          bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdFilter'
+      responses:
+        '204': { description: Deleted; no response body. }
+        '401': { $ref: '#/components/responses/ApiError' }
+
+  /rest/v1/rpc/get_session_by_token:
+    post:
+      tags: [Candidate]
+      summary: Read a session using its invitation token
+      description: |
+        Callable without an interviewer JWT. An invalid or revoked token returns
+        an empty array. The frontend uses the first row or treats the link as invalid.
+      operationId: getSessionByToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenRequest' }
+      responses:
+        '200':
+          description: Zero or one guest-visible session.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CandidateSession' }
+        '400': { $ref: '#/components/responses/ApiError' }
+
+  /rest/v1/rpc/save_canvas_by_token:
+    post:
+      tags: [Candidate]
+      summary: Save a candidate canvas using its invitation token
+      description: |
+        Returns false unless the token is valid, status is live, and candidate
+        editing is unlocked. The SQL function rejects canvases larger than 2 MB.
+      operationId: saveCanvasByToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveCanvasRequest' }
+      responses:
+        '200':
+          description: Whether the canvas was saved.
+          content:
+            application/json:
+              schema: { type: boolean }
+        '400': { $ref: '#/components/responses/ApiError' }
+
+  /realtime/v1/websocket:
+    get:
+      tags: [Realtime]
+      summary: Upgrade to the shared-room WebSocket
+      description: |
+        Supabase Realtime protocol connection, not a conventional JSON response.
+        The frontend joins room:<sessionId>, tracks peer presence, and exchanges
+        broadcast events. The publishable key is sent as a query parameter; an
+        authenticated interviewer's access token may also be passed by the SDK.
+        The candidate invitation token is not sent when joining this public
+        channel, so the channel itself does not validate invitation access.
+      operationId: connectRealtime
+      security: []
+      parameters:
+        - name: apikey
+          in: query
+          required: true
+          schema: { type: string }
+        - name: vsn
+          in: query
+          required: false
+          schema: { type: string, default: 2.0.0 }
+      responses:
+        '101': { description: WebSocket upgrade; subsequent messages use the Supabase Realtime protocol. }
+      x-realtime:
+        topic: 'room:<sessionId>'
+        broadcastSelf: false
+        presenceKey: peer.id
+        presencePayload: { $ref: '#/components/schemas/Peer' }
+        broadcastEvents:
+          op: { $ref: '#/components/schemas/CanvasEvent' }
+          sync-req: { type: object, maxProperties: 0 }
+          sync: { $ref: '#/components/schemas/CanvasEvent' }
+          cursor: { $ref: '#/components/schemas/CursorEvent' }
+          session: { $ref: '#/components/schemas/SessionEvent' }
+
+  /realtime/v1/api/broadcast:
+    post:
+      tags: [Realtime]
+      summary: SDK HTTP fallback for a broadcast when the channel is not connected
+      description: The normal transport is the WebSocket above. The installed Realtime SDK can fall back to this endpoint for sends.
+      operationId: broadcastFallback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    required: [topic, event, payload, private]
+                    properties:
+                      topic: { type: string, description: 'room:<sessionId>' }
+                      event: { type: string, enum: [op, sync-req, sync, cursor, session] }
+                      payload: { type: object }
+                      private: { type: boolean, const: false }
+      responses:
+        '200': { description: Broadcast accepted; response body is not used by the frontend. }
+        '202': { description: Broadcast queued; response body is not used by the frontend. }
+        '400': { $ref: '#/components/responses/ApiError' }
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: apikey
+      description: Supabase publishable key; not a user login token.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Interviewer access token returned by /auth/v1/token.
+  parameters:
+    RequiredIdFilter:
+      name: id
+      in: query
+      required: true
+      description: PostgREST equality filter, for example id=eq.<session-uuid>.
+      schema: { type: string, pattern: '^eq\.' }
+    OptionalIdFilter:
+      name: id
+      in: query
+      required: false
+      description: PostgREST equality filter when fetching one session.
+      schema: { type: string, pattern: '^eq\.' }
+    Select:
+      name: select
+      in: query
+      required: false
+      description: "'*' for a full session, id for create, or the dashboard field list."
+      schema: { type: string }
+  responses:
+    ApiError:
+      description: Supabase Auth or PostgREST error.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: string }
+              error: { type: string }
+              error_description: { type: string }
+              message: { type: string }
+              hint: { type: [string, 'null'] }
+              details: { type: [string, 'null'] }
+            additionalProperties: true
+  schemas:
+    PasswordCredentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, writeOnly: true }
+        gotrue_meta_security:
+          type: object
+          properties:
+            captcha_token: { type: string }
+    SignUpRequest:
+      allOf:
+        - $ref: '#/components/schemas/PasswordCredentials'
+        - type: object
+          properties:
+            data: { type: object, description: Empty object in the current frontend. }
+            code_challenge: { type: [string, 'null'] }
+            code_challenge_method: { type: [string, 'null'] }
+    RefreshCredentials:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string, writeOnly: true }
+    AuthUser:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: [string, 'null'], format: email }
+      additionalProperties: true
+    AuthSession:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, user]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, example: bearer }
+        expires_in: { type: integer }
+        expires_at: { type: integer }
+        user: { $ref: '#/components/schemas/AuthUser' }
+      additionalProperties: true
+    SignUpResponse:
+      type: object
+      description: GoTrue may return the user at the top level while confirmation is pending, or a session-shaped object when confirmation is immediate.
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        user: { $ref: '#/components/schemas/AuthUser' }
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string }
+        expires_in: { type: integer }
+      additionalProperties: true
+    SessionId:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+    SessionSummary:
+      type: object
+      required: [id, title, prompt, status, duration_minutes, created_at, updated_at, candidate_token, canvas]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        prompt: { type: string }
+        status: { type: string, enum: [draft, live, ended] }
+        duration_minutes: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        candidate_token: { type: string }
+        canvas: { $ref: '#/components/schemas/Canvas' }
+    Session:
+      allOf:
+        - $ref: '#/components/schemas/SessionSummary'
+        - type: object
+          required: [owner_id, candidate_editing_locked, started_at, ended_at]
+          properties:
+            owner_id: { type: string, format: uuid }
+            candidate_editing_locked: { type: boolean }
+            started_at: { type: [string, 'null'], format: date-time }
+            ended_at: { type: [string, 'null'], format: date-time }
+    SessionCreate:
+      type: object
+      required: [owner_id, title, prompt, duration_minutes]
+      properties:
+        owner_id: { type: string, format: uuid }
+        title: { type: string, maxLength: 120 }
+        prompt: { type: string, maxLength: 5000 }
+        duration_minutes: { type: integer, minimum: 10, maximum: 240 }
+        canvas: { $ref: '#/components/schemas/Canvas' }
+    SessionPatch:
+      type: object
+      minProperties: 1
+      properties:
+        status: { type: string, enum: [draft, live, ended] }
+        started_at: { type: [string, 'null'], format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time }
+        candidate_token: { type: string }
+        candidate_editing_locked: { type: boolean }
+        canvas: { $ref: '#/components/schemas/Canvas' }
+      additionalProperties: false
+    CandidateSession:
+      type: object
+      required: [id, title, prompt, duration_minutes, status, candidate_editing_locked, canvas, started_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        prompt: { type: string }
+        duration_minutes: { type: integer }
+        status: { type: string, enum: [draft, live, ended] }
+        candidate_editing_locked: { type: boolean }
+        canvas: { $ref: '#/components/schemas/Canvas' }
+        started_at: { type: [string, 'null'], format: date-time }
+    TokenRequest:
+      type: object
+      required: [_token]
+      properties:
+        _token: { type: string, description: Tokens shorter than 24 characters yield an empty result. }
+    SaveCanvasRequest:
+      type: object
+      required: [_token, _canvas]
+      properties:
+        _token: { type: string }
+        _canvas: { $ref: '#/components/schemas/Canvas' }
+    Canvas:
+      type: object
+      required: [elements]
+      properties:
+        elements:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/NodeElement'
+              - $ref: '#/components/schemas/NoteElement'
+              - $ref: '#/components/schemas/TextElement'
+              - $ref: '#/components/schemas/EdgeElement'
+              - $ref: '#/components/schemas/PathElement'
+    ElementBase:
+      type: object
+      required: [id, kind, u]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        u: { type: number, description: Client update timestamp in milliseconds. }
+        by: { type: string }
+        deleted: { type: boolean }
+    NodeElement:
+      allOf:
+        - $ref: '#/components/schemas/ElementBase'
+        - type: object
+          required: [component, x, y, w, h, label]
+          properties:
+            kind: { const: node }
+            component: { type: string }
+            x: { type: number }
+            y: { type: number }
+            w: { type: number }
+            h: { type: number }
+            label: { type: string }
+    NoteElement:
+      allOf:
+        - $ref: '#/components/schemas/ElementBase'
+        - type: object
+          required: [x, y, w, h, text]
+          properties:
+            kind: { const: note }
+            x: { type: number }
+            y: { type: number }
+            w: { type: number }
+            h: { type: number }
+            text: { type: string }
+    TextElement:
+      allOf:
+        - $ref: '#/components/schemas/ElementBase'
+        - type: object
+          required: [x, y, text]
+          properties:
+            kind: { const: text }
+            x: { type: number }
+            y: { type: number }
+            text: { type: string }
+    EdgeElement:
+      allOf:
+        - $ref: '#/components/schemas/ElementBase'
+        - type: object
+          required: [from, to, label]
+          properties:
+            kind: { const: edge }
+            from: { type: string }
+            to: { type: string }
+            label: { type: string }
+    PathElement:
+      allOf:
+        - $ref: '#/components/schemas/ElementBase'
+        - type: object
+          required: [points]
+          properties:
+            kind: { const: path }
+            points:
+              type: array
+              items: { type: number }
+    Peer:
+      type: object
+      required: [id, name, role, color]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [interviewer, candidate] }
+        color: { type: string }
+    CanvasEvent:
+      type: object
+      required: [els]
+      properties:
+        els:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/NodeElement'
+              - $ref: '#/components/schemas/NoteElement'
+              - $ref: '#/components/schemas/TextElement'
+              - $ref: '#/components/schemas/EdgeElement'
+              - $ref: '#/components/schemas/PathElement'
+    CursorEvent:
+      type: object
+      required: [id, name, color, x, y]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        color: { type: string }
+        x: { type: number }
+        y: { type: number }
+    SessionEvent:
+      type: object
+      properties:
+        locked: { type: boolean }
+        status: { type: string, enum: [draft, live, ended] }
+        revoked: { type: boolean }
