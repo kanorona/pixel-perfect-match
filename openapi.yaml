@@ -3,17 +3,19 @@ info:
   title: Blueprint frontend backend contract
   version: 0.1.0
   description: |
-    Contract inferred from frontend/src. The current frontend calls Supabase Auth,
-    PostgREST, two SQL RPC functions, and Supabase Realtime directly; it does not
-    call a custom backend service. Paths below are Supabase wire paths, not new
-    application routes. SUPABASE_URL (VITE_SUPABASE_URL in the browser) is the base URL.
+    Contract inferred from frontend/src. The frontend uses a Supabase client and
+    calls Auth, PostgREST, two SQL RPC functions, and Realtime-shaped paths.
+    backend/ now provides a local in-memory FastAPI implementation of those paths.
+    SUPABASE_URL (VITE_SUPABASE_URL in the browser) is the base URL.
     Every HTTP request carries the publishable key in the apikey header. Interviewer
     table operations additionally require a user access token. The candidate RPCs
     accept the secret invitation token in the JSON body and do not require a user
     access token. Do not expose the service-role key to the browser.
 servers:
+  - url: http://127.0.0.1:8001
+    description: Local FastAPI exercise backend.
   - url: https://example.supabase.co
-    description: Replace with SUPABASE_URL / VITE_SUPABASE_URL.
+    description: Supabase deployment; replace with SUPABASE_URL / VITE_SUPABASE_URL.
 security:
   - apiKey: []
 paths:

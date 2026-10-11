@@ -37,9 +37,10 @@ function AuthPage() {
     setBusy(true);
     try {
       if (mode === "up") {
-        const { error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin + "/dashboard" } });
+        const { data, error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin + "/dashboard" } });
         if (error) throw error;
-        setSent(true);
+        if (data.session) navigate({ to: target, replace: true });
+        else setSent(true);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;

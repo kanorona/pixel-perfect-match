@@ -1,0 +1,22 @@
+[project]
+name = "blueprint-backend"
+version = "0.1.0"
+description = "In-memory FastAPI backend compatible with the Blueprint frontend"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<0.120",
+  "uvicorn[standard]>=0.30,<1",
+  "PyJWT>=2.9,<3",
+  "pwdlib[argon2]>=0.2,<1",
+  "email-validator>=2,<3",
+]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.27,<1",
+  "pytest>=8,<10",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

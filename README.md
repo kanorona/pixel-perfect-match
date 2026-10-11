@@ -27,3 +27,6 @@ npm run dev
 The frontend's current backend contract is in [`openapi.yaml`](openapi.yaml).
 For the reasoning behind the project structure and contract, see
 [`docs/spec.md`](docs/spec.md).
+
+For the local Python implementation and demo login, see
+[`backend/README.md`](backend/README.md).
