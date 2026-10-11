@@ -14,8 +14,16 @@ uv sync
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
-On a machine where `uv` is installed as a Python module but its command is not
-on `PATH`, use `python -m uv sync` and `python -m uv run python -m uvicorn ...`.
+In Windows PowerShell, if `uv` is not recognized but `python -m uv --version`
+works, run these commands from `backend/` instead:
+
+```powershell
+python -m uv sync
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
+```
+
+`app.main:app` refers to the `app` object in `backend/app/main.py` when the
+current directory is `backend/`. `--reload` restarts the server after code edits.
 The interactive API reference is at `http://127.0.0.1:8001/docs`.
 
 The seeded interviewer account is `demo@example.com` / `DemoPass123!`.
