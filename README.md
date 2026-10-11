@@ -30,3 +30,29 @@ For the reasoning behind the project structure and contract, see
 
 For the local Python implementation and demo login, see
 [`backend/README.md`](backend/README.md).
+
+## Run both local servers with Make
+
+From the repository root, with GNU Make, Python, `uv` (available as
+`python -m uv`), Node.js, and npm installed:
+
+```sh
+make setup
+```
+
+`make setup` also creates `frontend/.env.local` from the example if needed; it
+keeps any existing local settings. Then start each server in its own terminal:
+
+```sh
+make backend
+```
+
+```sh
+make frontend
+```
+
+Open `http://127.0.0.1:8081/` for the frontend and
+`http://127.0.0.1:8001/docs` for the backend API reference. Run `make test` to
+check both applications. On Windows, `make` requires GNU Make to be installed;
+the commands in [`backend/README.md`](backend/README.md) also work directly in
+PowerShell.
