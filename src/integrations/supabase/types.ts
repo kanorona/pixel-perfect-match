@@ -14,13 +14,76 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      interview_sessions: {
+        Row: {
+          candidate_editing_locked: boolean
+          candidate_token: string
+          canvas: Json
+          created_at: string
+          duration_minutes: number
+          ended_at: string | null
+          id: string
+          owner_id: string
+          prompt: string
+          started_at: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          candidate_editing_locked?: boolean
+          candidate_token?: string
+          canvas?: Json
+          created_at?: string
+          duration_minutes?: number
+          ended_at?: string | null
+          id?: string
+          owner_id: string
+          prompt?: string
+          started_at?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          candidate_editing_locked?: boolean
+          candidate_token?: string
+          canvas?: Json
+          created_at?: string
+          duration_minutes?: number
+          ended_at?: string | null
+          id?: string
+          owner_id?: string
+          prompt?: string
+          started_at?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_session_by_token: {
+        Args: { _token: string }
+        Returns: {
+          candidate_editing_locked: boolean
+          canvas: Json
+          duration_minutes: number
+          id: string
+          prompt: string
+          started_at: string
+          status: string
+          title: string
+        }[]
+      }
+      save_canvas_by_token: {
+        Args: { _canvas: Json; _token: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
