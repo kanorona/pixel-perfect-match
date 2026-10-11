@@ -24,5 +24,6 @@ npm i
 npm run dev
 ```
 
-The frontend's current backend contract is in [`openapi.yaml`](openapi.yaml),
-with a short pointer in [`docs/spec.md`](docs/spec.md).
+The frontend's current backend contract is in [`openapi.yaml`](openapi.yaml).
+For the reasoning behind the project structure and contract, see
+[`docs/spec.md`](docs/spec.md).
