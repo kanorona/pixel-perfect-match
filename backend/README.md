@@ -32,11 +32,11 @@ development examples. The password is hashed with Argon2 in memory, and login
 returns a signed bearer token. **Bearer token** means the caller proves its
 login by sending that token in the `Authorization` header.
 
-To connect the frontend, copy `frontend/.env.local.example` to
-`frontend/.env.local`, then restart `npm run dev` inside `frontend/`. The
-`.env.local` file is ignored by Git. The frontend continues using its Supabase
-JavaScript client, while this backend implements the API shapes that client
-expects. Start both servers before opening the dashboard.
+The frontend's tracked `.env.development` points its Supabase JavaScript client
+to this local backend. The client is an SDK (a library that sends HTTP and
+WebSocket requests); this backend implements the API shapes it expects. An
+existing `frontend/.env.local` overrides the tracked development settings.
+Start both servers before opening the dashboard.
 
 ## Test
 

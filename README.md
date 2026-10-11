@@ -40,8 +40,12 @@ From the repository root, with GNU Make, Python, `uv` (available as
 make setup
 ```
 
-`make setup` also creates `frontend/.env.local` from the example if needed; it
-keeps any existing local settings. Then start each server in its own terminal:
+In development, `frontend/.env.development` points the existing Supabase SDK
+client to the local FastAPI backend at port 8001. The backend implements the
+authentication, session, guest RPC, and Realtime routes that client calls.
+An existing `frontend/.env.local` takes precedence over `.env.development`, so
+check its URL if the frontend connects elsewhere. Start each server in its own
+terminal:
 
 ```sh
 make backend
@@ -55,4 +59,4 @@ Open `http://127.0.0.1:8081/` for the frontend and
 `http://127.0.0.1:8001/docs` for the backend API reference. Run `make test` to
 check both applications. On Windows, `make` requires GNU Make to be installed;
 the commands in [`backend/README.md`](backend/README.md) also work directly in
-PowerShell.
+PowerShell. For a local login, use `demo@example.com` / `DemoPass123!`.
