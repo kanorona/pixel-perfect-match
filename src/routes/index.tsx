@@ -68,7 +68,7 @@ function DiagramPreview() {
     { x: 660, y: 30, l: "Cache", c: "var(--chart-3)" },
     { x: 660, y: 150, l: "Database", c: "var(--chart-4)" },
   ];
-  const lines = [[0, 1], [1, 2], [1, 3], [2, 4], [3, 5], [2, 5]];
+  const lines: [number, number][] = [[0, 1], [1, 2], [1, 3], [2, 4], [3, 5], [2, 5]];
   return (
     <div className="mt-16 overflow-hidden rounded-2xl border bg-canvas p-6 shadow-glow">
       <svg viewBox="0 0 820 230" className="w-full">
@@ -78,7 +78,7 @@ function DiagramPreview() {
           </marker>
         </defs>
         {lines.map(([a, b], i) => (
-          <line key={i} x1={boxes[a].x + 140} y1={boxes[a].y + 25} x2={boxes[b].x} y2={boxes[b].y + 25} stroke="var(--edge)" strokeWidth="1.5" markerEnd="url(#a)" opacity="0.8" />
+          <line key={i} x1={boxes[a]!.x + 140} y1={boxes[a]!.y + 25} x2={boxes[b]!.x} y2={boxes[b]!.y + 25} stroke="var(--edge)" strokeWidth="1.5" markerEnd="url(#a)" opacity="0.8" />
         ))}
         {boxes.map((b, i) => (
           <g key={i}>

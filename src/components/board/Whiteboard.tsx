@@ -275,7 +275,7 @@ export function Whiteboard({ elements, commit, readOnly, cursors, onCursor }: Pr
           {ghost && boxes[ghost.from] && (
             <line
               {...(() => {
-                const a = edgePoint(boxes[ghost.from], ghost.x, ghost.y);
+                const a = edgePoint(boxes[ghost.from]!, ghost.x, ghost.y);
                 return { x1: a.x, y1: a.y, x2: ghost.x, y2: ghost.y };
               })()}
               stroke="var(--edge)"
@@ -286,7 +286,7 @@ export function Whiteboard({ elements, commit, readOnly, cursors, onCursor }: Pr
           )}
           {list.map((el) => {
             if (el.kind === "node") {
-              const item = PALETTE_BY_ID[el.component] ?? PALETTE[5];
+              const item = (PALETTE_BY_ID[el.component] ?? PALETTE[5])!;
               const Icon = item.icon;
               const sel = selected === el.id;
               return (
@@ -473,7 +473,7 @@ function EditOverlay({ el, view, boxes, onDone }: { el: El; view: View; boxes: R
   } else if (el.kind === "text") {
     x = el.x; y = el.y; w = 260; h = 32;
   } else if (el.kind === "edge" && boxes[el.from] && boxes[el.to]) {
-    const a = boxes[el.from], b = boxes[el.to];
+    const a = boxes[el.from]!, b = boxes[el.to]!;
     x = (a.x + a.w / 2 + b.x + b.w / 2) / 2 - 90; y = (a.y + a.h / 2 + b.y + b.h / 2) / 2 - 16;
   }
   const style = { left: view.x + x * view.z, top: view.y + y * view.z, width: w * view.z, height: h * view.z };

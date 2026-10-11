@@ -11,7 +11,7 @@ type Opts = {
   initial: unknown;
   canEdit: boolean;
   save: (canvas: Canvas) => Promise<void>;
-  onSession?: (e: SessionEvent) => void;
+  onSession?: ((e: SessionEvent) => void) | undefined;
 };
 
 export function useRoom({ sessionId, me, initial, canEdit, save, onSession }: Opts) {
@@ -116,7 +116,7 @@ export function useRoom({ sessionId, me, initial, canEdit, save, onSession }: Op
       .on("broadcast", { event: "session" }, ({ payload }) => onSessionRef.current?.(payload as SessionEvent))
       .on("presence", { event: "sync" }, () => {
         const st = ch.presenceState<Peer>();
-        setPeers(Object.values(st).map((arr) => arr[0]));
+        setPeers(Object.values(st).map((arr) => arr[0]).filter(Boolean) as Peer[]);
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
