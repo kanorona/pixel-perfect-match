@@ -13,12 +13,19 @@ archivo SQLite `backend/blueprint.db`; las sesiones sobreviven al reinicio.
 - La compilación `npm run build` terminó correctamente tras conectar el
   frontend, y Vite cargó la URL local de desarrollo.
 - En una ejecución anterior, la prueba del frontend pasó. La suite del backend
-  pasó completa (7 pruebas) fuera del aislamiento que bloqueaba `TestClient`.
-  Falta repetir la prueba completa en navegador después de corregir el canal
-  Realtime que aparecía como `Offline` en las capturas del usuario. El SDK
+  pasó completa (8 pruebas) el 11 de octubre de 2026, incluida una prueba de
+  reinicio que conserva cuenta, entrevista, lienzo y tokens, y mantiene borrada
+  una entrevista de ejemplo. Falta repetir la prueba completa en navegador
+  después de corregir el canal Realtime que aparecía como `Offline` en las
+  capturas del usuario. El SDK
   añadía el prefijo `realtime:` y enviaba las difusiones como tramas binarias;
   el backend ahora admite ambos comportamientos.
 - La cuenta de demostración es `demo@example.com` / `DemoPass123!`.
+- La persistencia con SQLAlchemy y SQLite quedó en el commit `232254a`.
+  `BLUEPRINT_DATABASE_URL` permite elegir la base de datos; si no se define,
+  el backend usa `backend/blueprint.db`. Los datos nuevos sobreviven al reinicio.
+  Los datos que solo existían en la memoria del servidor anterior no se pueden
+  recuperar.
 
 ## Arranque en Windows PowerShell
 
@@ -45,13 +52,18 @@ el comando `uv` no estaba en el `PATH` de PowerShell.
 
 ## Primer paso al retomar
 
-Verificar con ambos servidores encendidos el inicio de sesión, la lista de dos
-entrevistas de ejemplo, la creación y edición de una sesión, el enlace de
+Verificar con ambos servidores encendidos el inicio de sesión, la lista de
+entrevistas, la creación y edición de una sesión, el enlace de
 candidato y la sincronización del lienzo entre dos ventanas. El backend ya
 acepta el prefijo `realtime:` que añade el SDK al nombre del canal. Si una llamada
 falla, comparar su URL, cuerpo y respuesta con `openapi.yaml` y corregir el
 cliente o el backend. `frontend/.env.local`, si existe, prevalece sobre la
 configuración de desarrollo; comprobar que apunta al puerto 8001.
+
+La primera vez con una base nueva aparecerán dos entrevistas de ejemplo. En
+arranques posteriores se conserva el estado guardado, por lo que el número de
+entrevistas puede ser distinto. Para comprobar la persistencia manualmente,
+crear una entrevista, reiniciar solo el backend y confirmar que sigue visible.
 
 Al guardar este punto, `frontend/package-lock.json` era un archivo nuevo sin
 seguimiento de Git, producido por `npm install`. Revisarlo antes de decidir si
