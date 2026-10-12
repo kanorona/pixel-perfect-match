@@ -15,10 +15,19 @@ router = APIRouter(tags=["Realtime"])
 class Client:
     socket: WebSocket
     topic: str
+    room: str
     join_ref: str | None
     key: str | None = None
     peer: dict | None = None
     phx_ref: str | None = None
+
+
+def room_key(topic: str) -> str | None:
+    """Normalize SDK topics and HTTP fallback topics to one room key."""
+    room = topic.removeprefix("realtime:")
+    if not room.startswith("room:") or not room[5:]:
+        return None
+    return room
 
 
 class RoomHub:
@@ -26,16 +35,16 @@ class RoomHub:
         self.rooms: dict[str, list[Client]] = {}
 
     async def join(self, client: Client) -> None:
-        self.rooms.setdefault(client.topic, []).append(client)
+        self.rooms.setdefault(client.room, []).append(client)
         state = {
             member.key: {"metas": [{**member.peer, "phx_ref": member.phx_ref}]}
-            for member in self.rooms[client.topic]
+            for member in self.rooms[client.room]
             if member.key and member.peer
         }
         await self.send(client, "presence_state", state)
 
     async def leave(self, client: Client) -> None:
-        members = self.rooms.get(client.topic, [])
+        members = self.rooms.get(client.room, [])
         if client in members:
             members.remove(client)
         if client.key and client.peer:
@@ -43,7 +52,7 @@ class RoomHub:
                 client.key: {"metas": [{**client.peer, "phx_ref": client.phx_ref}]}
             })
         if not members:
-            self.rooms.pop(client.topic, None)
+            self.rooms.pop(client.room, None)
 
     async def track(self, client: Client, peer: dict) -> None:
         client.key = str(peer.get("id", ""))
@@ -61,11 +70,11 @@ class RoomHub:
         client.key = client.peer = client.phx_ref = None
 
     async def _presence_diff(self, client: Client, joins: dict, leaves: dict) -> None:
-        for member in list(self.rooms.get(client.topic, [])):
+        for member in list(self.rooms.get(client.room, [])):
             await self.send(member, "presence_diff", {"joins": joins, "leaves": leaves})
 
     async def broadcast(self, topic: str, event: str, payload: dict, sender: Client | None = None) -> None:
-        for member in list(self.rooms.get(topic, [])):
+        for member in list(self.rooms.get(room_key(topic), [])):
             if member is not sender:
                 await self.send(member, "broadcast", {"event": event, "payload": payload})
 
@@ -97,13 +106,13 @@ async def websocket_room(socket: WebSocket) -> None:
                 await socket.send_json(reply(join_ref, ref, topic))
                 continue
             if event == "phx_join":
-                session_id = str(topic).removeprefix("room:")
-                if not str(topic).startswith("room:") or session_id not in socket.app.state.store.sessions:
+                room = room_key(str(topic))
+                if not room or room[5:] not in socket.app.state.store.sessions:
                     await socket.send_json(reply(join_ref, ref, topic, "error", {"reason": "unknown room"}))
                     continue
                 if client:
                     await hub.leave(client)
-                client = Client(socket=socket, topic=topic, join_ref=join_ref)
+                client = Client(socket=socket, topic=topic, room=room, join_ref=join_ref)
                 await socket.send_json(reply(join_ref, ref, topic))
                 await hub.join(client)
                 continue

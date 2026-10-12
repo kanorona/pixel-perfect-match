@@ -13,10 +13,10 @@ datos de ejemplo y se pierden las sesiones creadas durante la ejecución.
 - La compilación `npm run build` terminó correctamente tras conectar el
   frontend, y Vite cargó la URL local de desarrollo.
 - En una ejecución anterior, la prueba del frontend pasó. La suite del backend
-  quedó sin responder en el entorno de pruebas; no hay una prueba completa en
-  navegador de inicio de sesión, entrevistas y Realtime después de la conexión.
+  pasó completa (7 pruebas) fuera del aislamiento que bloqueaba `TestClient`.
+  Falta repetir la prueba completa en navegador después de corregir el canal
+  Realtime que aparecía como `Offline` en la captura del usuario.
 - La cuenta de demostración es `demo@example.com` / `DemoPass123!`.
-- El último cambio funcional de la conexión está en el commit `45c420b`.
 
 ## Arranque en Windows PowerShell
 
@@ -45,7 +45,8 @@ el comando `uv` no estaba en el `PATH` de PowerShell.
 
 Verificar con ambos servidores encendidos el inicio de sesión, la lista de dos
 entrevistas de ejemplo, la creación y edición de una sesión, el enlace de
-candidato y la sincronización del lienzo entre dos ventanas. Si una llamada
+candidato y la sincronización del lienzo entre dos ventanas. El backend ya
+acepta el prefijo `realtime:` que añade el SDK al nombre del canal. Si una llamada
 falla, comparar su URL, cuerpo y respuesta con `openapi.yaml` y corregir el
 cliente o el backend. `frontend/.env.local`, si existe, prevalece sobre la
 configuración de desarrollo; comprobar que apunta al puerto 8001.

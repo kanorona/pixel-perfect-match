@@ -76,7 +76,10 @@ cuerpo de la solicitud en vez de la cabecera `Authorization`.
 ## Qué cambia con Realtime
 
 El lienzo compartido usa un WebSocket para presencia, cursores y cambios
-instantáneos. OpenAPI describe principalmente HTTP, así que la ruta WebSocket
+instantáneos. El cliente llama a `channel('room:<sessionId>')`, pero el SDK
+envía `realtime:room:<sessionId>` como nombre de sala por WebSocket. En el
+envío alternativo por HTTP usa `room:<sessionId>`; el backend normaliza ambos.
+OpenAPI describe principalmente HTTP, así que la ruta WebSocket
 tiene una extensión `x-realtime` que enumera los eventos (`op`, `sync-req`,
 `sync`, `cursor` y `session`). Los cambios también se guardan por HTTP; recibir
 un evento en vivo no equivale a persistirlo.

@@ -267,8 +267,9 @@ paths:
       summary: Upgrade to the shared-room WebSocket
       description: |
         Supabase Realtime protocol connection, not a conventional JSON response.
-        The frontend joins room:<sessionId>, tracks peer presence, and exchanges
-        broadcast events. The publishable key is sent as a query parameter; an
+        The frontend calls channel('room:<sessionId>'); the installed SDK sends
+        realtime:room:<sessionId> as the WebSocket topic. It tracks peer presence
+        and exchanges broadcast events. The publishable key is sent as a query parameter; an
         authenticated interviewer's access token may also be passed by the SDK.
         The candidate invitation token is not sent when joining this public
         channel, so the channel itself does not validate invitation access.
@@ -286,7 +287,7 @@ paths:
       responses:
         '101': { description: WebSocket upgrade; subsequent messages use the Supabase Realtime protocol. }
       x-realtime:
-        topic: 'room:<sessionId>'
+        topic: 'realtime:room:<sessionId>'
         broadcastSelf: false
         presenceKey: peer.id
         presencePayload: { $ref: '#/components/schemas/Peer' }
@@ -301,7 +302,7 @@ paths:
     post:
       tags: [Realtime]
       summary: SDK HTTP fallback for a broadcast when the channel is not connected
-      description: The normal transport is the WebSocket above. The installed Realtime SDK can fall back to this endpoint for sends.
+      description: The normal transport is the WebSocket above. The installed Realtime SDK can fall back to this endpoint for sends; its HTTP topic omits the realtime: prefix.
       operationId: broadcastFallback
       requestBody:
         required: true

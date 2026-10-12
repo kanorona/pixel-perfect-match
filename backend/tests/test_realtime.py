@@ -1,3 +1,5 @@
+import pytest
+
 from app.auth import PUBLIC_KEY
 
 
@@ -9,10 +11,11 @@ def receive_event(socket, event, topic=None):
     raise AssertionError(f"No {event} event received")
 
 
-def test_two_clients_share_broadcast_and_presence(client, signed_in):
+@pytest.mark.parametrize("prefix", ["", "realtime:"])
+def test_two_clients_share_broadcast_and_presence(client, signed_in, prefix):
     _, headers = signed_in
     session_id = client.get("/rest/v1/interview_sessions", headers=headers).json()[0]["id"]
-    topic = f"room:{session_id}"
+    topic = f"{prefix}room:{session_id}"
     path = f"/realtime/v1/websocket?apikey={PUBLIC_KEY}&vsn=2.0.0"
     with client.websocket_connect(path) as first, client.websocket_connect(path) as second:
         first.send_json(["1", "1", topic, "phx_join", {"config": {}}])
@@ -30,5 +33,10 @@ def test_two_clients_share_broadcast_and_presence(client, signed_in):
         first.send_json(["1", "4", topic, "broadcast",
                          {"type": "broadcast", "event": "cursor", "payload": {"id": "interviewer", "x": 1}}])
         assert receive_event(second, "broadcast")[4]["payload"]["x"] == 1
+        response = client.post("/realtime/v1/api/broadcast", headers=headers, json={"messages": [{
+            "topic": f"room:{session_id}", "event": "cursor", "payload": {"x": 2}, "private": False,
+        }]})
+        assert response.status_code == 200
+        assert receive_event(second, "broadcast")[4]["payload"]["x"] == 2
         first.send_json([None, "5", "phoenix", "heartbeat", {}])
         assert receive_event(first, "phx_reply", "phoenix")[2] == "phoenix"
