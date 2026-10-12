@@ -15,7 +15,9 @@ datos de ejemplo y se pierden las sesiones creadas durante la ejecución.
 - En una ejecución anterior, la prueba del frontend pasó. La suite del backend
   pasó completa (7 pruebas) fuera del aislamiento que bloqueaba `TestClient`.
   Falta repetir la prueba completa en navegador después de corregir el canal
-  Realtime que aparecía como `Offline` en la captura del usuario.
+  Realtime que aparecía como `Offline` en las capturas del usuario. El SDK
+  añadía el prefijo `realtime:` y enviaba las difusiones como tramas binarias;
+  el backend ahora admite ambos comportamientos.
 - La cuenta de demostración es `demo@example.com` / `DemoPass123!`.
 
 ## Arranque en Windows PowerShell

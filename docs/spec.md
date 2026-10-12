@@ -79,6 +79,9 @@ El lienzo compartido usa un WebSocket para presencia, cursores y cambios
 instantáneos. El cliente llama a `channel('room:<sessionId>')`, pero el SDK
 envía `realtime:room:<sessionId>` como nombre de sala por WebSocket. En el
 envío alternativo por HTTP usa `room:<sessionId>`; el backend normaliza ambos.
+Además, los eventos de difusión (`broadcast`) salen del SDK como tramas
+binarias con contenido JSON. El backend debe descodificarlas; intentar leerlas
+con `receive_json()` corta la conexión aunque el canal se haya unido bien.
 OpenAPI describe principalmente HTTP, así que la ruta WebSocket
 tiene una extensión `x-realtime` que enumera los eventos (`op`, `sync-req`,
 `sync`, `cursor` y `session`). Los cambios también se guardan por HTTP; recibir

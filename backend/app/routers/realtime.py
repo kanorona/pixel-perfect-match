@@ -1,5 +1,6 @@
 """Small Phoenix-compatible room protocol for the Supabase Realtime client."""
 
+import json
 from dataclasses import dataclass
 from secrets import token_hex
 
@@ -28,6 +29,37 @@ def room_key(topic: str) -> str | None:
     if not room.startswith("room:") or not room[5:]:
         return None
     return room
+
+
+def decode_binary_broadcast(data: bytes) -> list:
+    """Decode the SDK's version-2 user broadcast push (kind 3, JSON payload)."""
+    if len(data) < 7 or data[0] != 3 or data[6] != 1:
+        raise ValueError("Unsupported binary Realtime frame")
+    lengths = data[1:6]
+    if len(data) < 7 + sum(lengths):
+        raise ValueError("Incomplete binary Realtime frame")
+    offset = 7
+    fields = []
+    for length in lengths:
+        fields.append(data[offset:offset + length].decode("utf-8"))
+        offset += length
+    join_ref, ref, topic, event, _metadata = fields
+    payload = json.loads(data[offset:].decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Expected JSON object in Realtime broadcast")
+    return [join_ref or None, ref or None, topic, "broadcast", {"event": event, "payload": payload}]
+
+
+async def receive_message(socket: WebSocket) -> list:
+    frame = await socket.receive()
+    if frame["type"] == "websocket.disconnect":
+        raise WebSocketDisconnect(frame.get("code", 1000))
+    if frame.get("bytes") is not None:
+        return decode_binary_broadcast(frame["bytes"])
+    message = json.loads(frame.get("text") or "null")
+    if not isinstance(message, list) or len(message) != 5:
+        raise ValueError("Expected a five-element Realtime message")
+    return message
 
 
 class RoomHub:
@@ -97,11 +129,14 @@ async def websocket_room(socket: WebSocket) -> None:
     client: Client | None = None
     try:
         while True:
-            message = await socket.receive_json()
-            if not isinstance(message, list) or len(message) != 5:
+            try:
+                join_ref, ref, topic, event, payload = await receive_message(socket)
+            except (ValueError, UnicodeDecodeError):
                 await socket.close(code=1003)
                 return
-            join_ref, ref, topic, event, payload = message
+            if not isinstance(payload, dict):
+                await socket.close(code=1003)
+                return
             if event == "heartbeat" and topic == "phoenix":
                 await socket.send_json(reply(join_ref, ref, topic))
                 continue

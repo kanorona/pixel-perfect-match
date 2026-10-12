@@ -271,6 +271,8 @@ paths:
         realtime:room:<sessionId> as the WebSocket topic. It tracks peer presence
         and exchanges broadcast events. The publishable key is sent as a query parameter; an
         authenticated interviewer's access token may also be passed by the SDK.
+        The SDK sends broadcast pushes as version-2 binary frames (kind 3, JSON
+        payload); join, presence, heartbeat, and server replies use JSON text.
         The candidate invitation token is not sent when joining this public
         channel, so the channel itself does not validate invitation access.
       operationId: connectRealtime
@@ -288,6 +290,7 @@ paths:
         '101': { description: WebSocket upgrade; subsequent messages use the Supabase Realtime protocol. }
       x-realtime:
         topic: 'realtime:room:<sessionId>'
+        broadcastPushEncoding: 'Phoenix v2 binary kind 3 with JSON payload'
         broadcastSelf: false
         presenceKey: peer.id
         presencePayload: { $ref: '#/components/schemas/Peer' }

@@ -1,14 +1,23 @@
+import json
+
 import pytest
 
 from app.auth import PUBLIC_KEY
 
 
 def receive_event(socket, event, topic=None):
-    for _ in range(5):
+    for _ in range(12):
         message = socket.receive_json()
         if message[3] == event and (topic is None or message[2] == topic):
             return message
     raise AssertionError(f"No {event} event received")
+
+
+def sdk_binary_broadcast(topic, event, payload):
+    # realtime-js v2 sends broadcast pushes as kind-3 binary frames.
+    fields = [b"1", b"5", topic.encode("utf-8"), event.encode("utf-8"), b""]
+    header = bytes([3, *(len(field) for field in fields), 1])
+    return header + b"".join(fields) + json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
 @pytest.mark.parametrize("prefix", ["", "realtime:"])
@@ -33,6 +42,10 @@ def test_two_clients_share_broadcast_and_presence(client, signed_in, prefix):
         first.send_json(["1", "4", topic, "broadcast",
                          {"type": "broadcast", "event": "cursor", "payload": {"id": "interviewer", "x": 1}}])
         assert receive_event(second, "broadcast")[4]["payload"]["x"] == 1
+        first.send_bytes(sdk_binary_broadcast(topic, "sync-req", {"name": "Niña"}))
+        binary_event = receive_event(second, "broadcast")
+        assert binary_event[4]["event"] == "sync-req"
+        assert binary_event[4]["payload"]["name"] == "Niña"
         response = client.post("/realtime/v1/api/broadcast", headers=headers, json={"messages": [{
             "topic": f"room:{session_id}", "event": "cursor", "payload": {"x": 2}, "private": False,
         }]})
