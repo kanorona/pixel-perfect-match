@@ -12,6 +12,8 @@ node_modules
 __pycache__/
 .pytest_cache/
 .uv-cache/
+backend/*.db
+backend/*.db-*
 dist
 dist-ssr
 .output

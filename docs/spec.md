@@ -10,7 +10,7 @@ Este documento explica las decisiones y cómo leerlo.
 | Ubicación | Propósito |
 | --- | --- |
 | `frontend/` | Aplicación TanStack Start, componentes, pruebas y dependencias de Node.js. |
-| `backend/` | Backend FastAPI en Python, con datos en memoria y pruebas. |
+| `backend/` | Backend FastAPI en Python, con SQLAlchemy, SQLite y pruebas. |
 | `docs/` | Explicaciones para quienes desarrollan o revisan el proyecto. |
 | `openapi.yaml` | Contrato legible por herramientas: rutas, métodos, datos y autenticación. |
 | `AGENTS.md` | Instrucciones de trabajo para agentes que colaboren en el repositorio. |
@@ -26,7 +26,7 @@ El frontend nació conectado **directamente a Supabase**, una plataforma que
 combina PostgreSQL con autenticación, API y comunicación en tiempo real. Por
 eso `openapi.yaml` describe las rutas que usa su cliente JavaScript: Auth,
 PostgREST, funciones RPC y Realtime. El backend FastAPI local reproduce esas
-rutas y formatos con datos en memoria; así el frontend puede cambiar de servidor
+rutas y formatos con SQLAlchemy; así el frontend puede cambiar de servidor
 mediante `frontend/.env.development`, sin reescribir sus llamadas. Un archivo
 local `frontend/.env.local`, si existe, tiene prioridad. La configuración
 original de datos en `drizzle/` y `supabase/` continúa en la raíz.
@@ -41,8 +41,10 @@ sobre nombres de campos, formatos, métodos o permisos.
 
 También sirve como lista de verificación para implementar y probar el backend.
 En este ejercicio, FastAPI conserva las rutas y respuestas que espera el
-frontend. Primero usamos datos en memoria para verificar esa conexión; después
-se puede añadir persistencia sin cambiar el acuerdo de la API. El contrato debe
+frontend. Primero usamos datos en memoria para verificar esa conexión y después
+añadimos SQLite y SQLAlchemy sin cambiar el acuerdo de la API. La URL de la base
+de datos se configura con `BLUEPRINT_DATABASE_URL`; cambiar de motor después
+requerirá el controlador correspondiente y migraciones de esquema. El contrato debe
 actualizarse junto con el código: el archivo por sí solo no implementa ni
 protege una ruta.
 
@@ -63,7 +65,7 @@ protege una ruta.
 
 El entrevistador inicia sesión y envía su token de usuario al consultar o
 modificar `interview_sessions`. Supabase usa políticas de seguridad de filas;
-el backend en memoria comprueba la propiedad de cada entrevista antes de
+el backend local comprueba la propiedad de cada entrevista antes de
 leerla o modificarla.
 
 El candidato no crea una cuenta: recibe un enlace con un token secreto. El

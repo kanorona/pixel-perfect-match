@@ -3,12 +3,11 @@
 import os
 from datetime import datetime, timedelta, timezone
 from secrets import token_urlsafe
-from uuid import uuid4
 
 import jwt
 from fastapi import Header, Request
 
-from app.store import MemoryStore, User
+from app.store import DatabaseStore, User
 
 PUBLIC_KEY = os.getenv("BLUEPRINT_PUBLIC_KEY", "sb_publishable_local_demo")
 
@@ -25,39 +24,32 @@ def require_api_key(apikey: str | None = Header(default=None)) -> None:
         raise ApiError(401, "Invalid API key", "invalid_api_key")
 
 
-def store_from(request: Request) -> MemoryStore:
+def store_from(request: Request) -> DatabaseStore:
     return request.app.state.store
 
 
 class AuthService:
-    def __init__(self, store: MemoryStore) -> None:
+    def __init__(self, store: DatabaseStore) -> None:
         self.store = store
-        self.secret = token_urlsafe(48)
+        self.secret = os.getenv("BLUEPRINT_JWT_SECRET") or store.signing_secret()
 
     def sign_up(self, email: str, password: str) -> User:
-        email = email.lower()
-        with self.store.lock:
-            if email in self.store.users:
-                raise ApiError(400, "User already registered", "user_already_exists")
-            user = User(id=str(uuid4()), email=email,
-                        password_hash=self.store.passwords.hash(password))
-            self.store.users[email] = user
-            return user
+        try:
+            return self.store.create_user(email, self.store.passwords.hash(password))
+        except ValueError as exc:
+            raise ApiError(400, "User already registered", "user_already_exists") from exc
 
     def password_login(self, email: str, password: str) -> dict:
-        with self.store.lock:
-            user = self.store.users.get(email.lower())
-            if not user or not self.store.passwords.verify(password, user.password_hash):
-                raise ApiError(400, "Invalid login credentials", "invalid_credentials")
-            return self._issue(user)
+        user = self.store.user_by_email(email)
+        if not user or not self.store.passwords.verify(password, user.password_hash):
+            raise ApiError(400, "Invalid login credentials", "invalid_credentials")
+        return self._issue(user)
 
     def refresh(self, refresh_token: str) -> dict:
-        with self.store.lock:
-            user_id = self.store.refresh_tokens.pop(refresh_token, None)
-            user = next((u for u in self.store.users.values() if u.id == user_id), None)
-            if not user:
-                raise ApiError(400, "Invalid refresh token", "invalid_refresh_token")
-            return self._issue(user)
+        user = self.store.consume_refresh_token(refresh_token)
+        if not user:
+            raise ApiError(400, "Invalid refresh token", "invalid_refresh_token")
+        return self._issue(user)
 
     def _issue(self, user: User) -> dict:
         issued = datetime.now(timezone.utc)
@@ -73,7 +65,7 @@ class AuthService:
             "version": user.token_version,
         }, self.secret, algorithm="HS256")
         refresh = token_urlsafe(48)
-        self.store.refresh_tokens[refresh] = user.id
+        self.store.save_refresh_token(refresh, user.id)
         return {
             "access_token": access,
             "refresh_token": refresh,
@@ -91,18 +83,13 @@ class AuthService:
                                 algorithms=["HS256"], audience="authenticated")
         except jwt.PyJWTError as exc:
             raise ApiError(401, "Invalid bearer token", "unauthorized") from exc
-        with self.store.lock:
-            user = next((u for u in self.store.users.values() if u.id == claims.get("sub")), None)
-            if not user or user.token_version != claims.get("version"):
-                raise ApiError(401, "Session revoked", "unauthorized")
-            return user
+        user = self.store.user_by_id(claims.get("sub"))
+        if not user or user.token_version != claims.get("version"):
+            raise ApiError(401, "Session revoked", "unauthorized")
+        return user
 
     def sign_out(self, user: User) -> None:
-        with self.store.lock:
-            user.token_version += 1
-            for token, user_id in list(self.store.refresh_tokens.items()):
-                if user_id == user.id:
-                    del self.store.refresh_tokens[token]
+        self.store.revoke_user_sessions(user.id)
 
 
 def auth_from(request: Request) -> AuthService:

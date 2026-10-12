@@ -3,8 +3,8 @@
 Este proyecto es un ejercicio de clase. El frontend en `frontend/` usa el SDK
 de Supabase, y el backend FastAPI en `backend/` reproduce las rutas que ese SDK
 necesita. La especificación está en `openapi.yaml`; `docs/spec.md` explica las
-decisiones. El backend guarda todo en memoria: al reiniciarlo se recuperan los
-datos de ejemplo y se pierden las sesiones creadas durante la ejecución.
+decisiones. El backend usa SQLAlchemy y guarda los datos por defecto en el
+archivo SQLite `backend/blueprint.db`; las sesiones sobreviven al reinicio.
 
 ## Estado confirmado
 

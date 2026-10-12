@@ -1,4 +1,6 @@
-"""Application factory keeps tests isolated from each other's in-memory data."""
+"""Application factory with a configurable SQLAlchemy database."""
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,12 +8,17 @@ from fastapi.responses import JSONResponse
 
 from app.auth import ApiError, AuthService
 from app.routers import auth, realtime, rpc, sessions
-from app.store import MemoryStore
+from app.store import DatabaseStore
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(title="Blueprint local backend", version="0.1.0")
-    app.state.store = MemoryStore()
+def create_app(database_url: str | None = None) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        app.state.store.close()
+
+    app = FastAPI(title="Blueprint local backend", version="0.1.0", lifespan=lifespan)
+    app.state.store = DatabaseStore(database_url)
     app.state.auth = AuthService(app.state.store)
     app.state.hub = realtime.RoomHub()
 

@@ -5,7 +5,7 @@ info:
   description: |
     Contract inferred from frontend/src. The frontend uses a Supabase client and
     calls Auth, PostgREST, two SQL RPC functions, and Realtime-shaped paths.
-    backend/ now provides a local in-memory FastAPI implementation of those paths.
+    backend/ now provides a local FastAPI implementation backed by SQLAlchemy.
     SUPABASE_URL (VITE_SUPABASE_URL in the browser) is the base URL.
     Every HTTP request carries the publishable key in the apikey header. Interviewer
     table operations additionally require a user access token. The candidate RPCs

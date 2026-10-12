@@ -142,7 +142,7 @@ async def websocket_room(socket: WebSocket) -> None:
                 continue
             if event == "phx_join":
                 room = room_key(str(topic))
-                if not room or room[5:] not in socket.app.state.store.sessions:
+                if not room or not socket.app.state.store.session_exists(room[5:]):
                     await socket.send_json(reply(join_ref, ref, topic, "error", {"reason": "unknown room"}))
                     continue
                 if client:

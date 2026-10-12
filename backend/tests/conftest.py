@@ -7,8 +7,9 @@ from app.store import DEMO_EMAIL, DEMO_PASSWORD
 
 
 @pytest.fixture
-def client():
-    with TestClient(create_app()) as test_client:
+def client(tmp_path):
+    database_url = f"sqlite:///{(tmp_path / 'test.db').as_posix()}"
+    with TestClient(create_app(database_url)) as test_client:
         yield test_client
 
 

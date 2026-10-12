@@ -1,7 +1,7 @@
 [project]
 name = "blueprint-backend"
 version = "0.1.0"
-description = "In-memory FastAPI backend compatible with the Blueprint frontend"
+description = "FastAPI backend with SQLAlchemy persistence compatible with the Blueprint frontend"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<0.120",
@@ -9,6 +9,7 @@ dependencies = [
   "PyJWT>=2.9,<3",
   "pwdlib[argon2]>=0.2,<1",
   "email-validator>=2,<3",
+  "sqlalchemy>=2.0,<3",
 ]
 
 [dependency-groups]
