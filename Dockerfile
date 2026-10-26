@@ -1,16 +1,18 @@
-FROM node:22-bookworm-slim AS frontend-build
+FROM node:24-bookworm-slim AS frontend-build
 
 WORKDIR /src/frontend
 COPY frontend/package.json ./
+# npm 10 crashes while resolving this dependency graph ("edgesOut").
+RUN npm install --global npm@11.19.0
 # Resolve native optional packages for this Linux image.
 RUN npm install --no-package-lock
 COPY frontend/ ./
 
 # The browser calls FastAPI on the same origin as the page.
-ENV BLUEPRINT_STATIC_BUILD=1 \
+RUN BLUEPRINT_STATIC_BUILD=1 \
     VITE_SUPABASE_URL=__BLUEPRINT_SAME_ORIGIN__ \
-    VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_local_demo
-RUN npm run build && test -f dist/client/_shell.html
+    VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_local_demo \
+    npm run build && test -f dist/client/_shell.html
 
 FROM python:3.12-slim-bookworm
 
