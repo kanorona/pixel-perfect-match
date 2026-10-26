@@ -1,0 +1,16 @@
+.git
+.venv
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.uv-cache
+**/node_modules
+**/.output
+**/dist
+frontend/.env*
+frontend/package-lock.json
+backend/*.db
+backend/*.db-*
+frontend/.tanstack
+frontend/.nitro
+frontend/.vinxi

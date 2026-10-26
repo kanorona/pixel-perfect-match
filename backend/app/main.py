@@ -1,10 +1,13 @@
 """Application factory with a configurable SQLAlchemy database."""
 
 from contextlib import asynccontextmanager
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.auth import ApiError, AuthService
 from app.routers import auth, realtime, rpc, sessions
@@ -38,6 +41,28 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(sessions.router)
     app.include_router(rpc.router)
     app.include_router(realtime.router)
+
+    static_dir = Path(os.getenv("BLUEPRINT_STATIC_DIR", Path(__file__).resolve().parents[1] / "static"))
+    shell = static_dir / "_shell.html"
+    if shell.is_file():
+        app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="frontend-assets")
+
+        @app.get("/favicon.ico", include_in_schema=False)
+        def favicon() -> FileResponse:
+            return FileResponse(static_dir / "favicon.ico")
+
+        @app.get("/robots.txt", include_in_schema=False)
+        def robots() -> FileResponse:
+            return FileResponse(static_dir / "robots.txt")
+
+        @app.get("/", include_in_schema=False)
+        @app.get("/auth", include_in_schema=False)
+        @app.get("/dashboard", include_in_schema=False)
+        @app.get("/sessions/{session_id}", include_in_schema=False)
+        @app.get("/join/{token}", include_in_schema=False)
+        def frontend_shell() -> FileResponse:
+            return FileResponse(shell, media_type="text/html")
+
     return app
 
 

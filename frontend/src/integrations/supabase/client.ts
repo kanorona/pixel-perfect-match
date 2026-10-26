@@ -49,7 +49,11 @@ function createSupabaseFetch(supabaseUrl: string, supabaseKey: string): typeof f
 function createSupabaseClient() {
   // Use import.meta.env for client-side (Vite build-time replacement)
   // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env['VITE_SUPABASE_URL'] || process.env['SUPABASE_URL'];
+  const configuredUrl = import.meta.env['VITE_SUPABASE_URL'] || process.env['SUPABASE_URL'];
+  // The Docker SPA is served by FastAPI, so its API lives at the page's origin.
+  const SUPABASE_URL = configuredUrl === '__BLUEPRINT_SAME_ORIGIN__'
+    ? (typeof window === 'undefined' ? 'http://127.0.0.1:8001' : window.location.origin)
+    : configuredUrl;
   const SUPABASE_PUBLISHABLE_KEY = import.meta.env['VITE_SUPABASE_PUBLISHABLE_KEY'] || process.env['SUPABASE_PUBLISHABLE_KEY'];
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {

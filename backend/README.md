@@ -27,6 +27,27 @@ python -m uv sync
 current directory is `backend/`. `--reload` restarts the server after code edits.
 The interactive API reference is at `http://127.0.0.1:8001/docs`.
 
+## Run both apps in Docker
+
+From the repository root, with Docker installed:
+
+```powershell
+docker build -t blueprint .
+docker run --rm --name blueprint -p 8001:8001 -v blueprint-data:/data blueprint
+```
+
+Open `http://127.0.0.1:8001/`. FastAPI serves the frontend and the API on the
+same port; the browser also uses that same origin for HTTP and WebSocket calls.
+The Dockerfile first builds a static single-page app (SPA) with Node, then copies
+only its browser files into the Python image. Node is not needed at runtime.
+The named volume `blueprint-data` keeps SQLite data when the container is removed.
+To use another database, pass `BLUEPRINT_DATABASE_URL` to `docker run` and install
+its Python driver in the backend dependencies before building.
+
+The Docker build installs frontend packages for Linux from `package.json`.
+It uses the local demo publishable key; replace that configuration before
+exposing the app publicly.
+
 ## Database connection
 
 `BLUEPRINT_DATABASE_URL` selects the database. From `backend/` in PowerShell,
