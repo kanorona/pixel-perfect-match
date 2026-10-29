@@ -32,13 +32,16 @@ PostgreSQL en Docker.
   el orden de la carga inicial para respetar la clave foránea del propietario.
 - El 28 de octubre de 2026 pasaron 12 pruebas, incluida la integración real con
   PostgreSQL después de reiniciar su contenedor.
-- `interview-canvas-db` ejecuta `postgres:16-alpine`. Usa el volumen persistente
-  `interview-canvas-pgdata` y publica el puerto 5433 porque un PostgreSQL de
-  Windows ya ocupa el 5432.
-- `blueprint` ejecuta la imagen reconstruida `blueprint:latest` en el puerto
-  8001 y se conecta a `postgresql://sdip:sdip@host.docker.internal:5433/sdip`.
-  Se comprobó una escritura desde la API directamente con `psql` y después se
-  eliminó el registro temporal.
+- El servicio Compose `db` ejecuta `postgres:16-alpine`. Usa el volumen
+  persistente `interview-canvas-pgdata` y publica el puerto 5433 porque un
+  PostgreSQL de Windows ya ocupa el 5432.
+- El contenedor manual `blueprint` se verificó contra PostgreSQL mediante
+  `host.docker.internal` y después fue reemplazado por Docker Compose.
+- `docker-compose.yaml` reemplaza el arranque manual con los servicios `db` y
+  `app`. PostgreSQL tiene un health check y la aplicación espera a que esté
+  saludable. Compose publica la aplicación en `http://127.0.0.1:8100/` y la
+  base en el puerto 5433. Se comprobó que un registro sobrevive a `compose down`
+  seguido de `compose up`, y luego se eliminó el registro temporal.
 
 ## Arranque en Windows PowerShell
 
@@ -65,7 +68,7 @@ el comando `uv` no estaba en el `PATH` de PowerShell.
 
 ## Primer paso al retomar
 
-Abrir `http://127.0.0.1:8001/` y verificar el inicio de sesión, la lista de
+Abrir `http://127.0.0.1:8100/` y verificar el inicio de sesión, la lista de
 entrevistas, la creación y edición de una sesión, el enlace de candidato y la
 sincronización del lienzo entre dos ventanas. El backend ya
 acepta el prefijo `realtime:` que añade el SDK al nombre del canal. Si una llamada

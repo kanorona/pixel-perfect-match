@@ -48,6 +48,30 @@ The Docker build installs frontend packages for Linux from `package.json`.
 It uses the local demo publishable key; replace that configuration before
 exposing the app publicly.
 
+### Run the application stack with Docker Compose
+
+The repository-level `docker-compose.yaml` defines both services required by
+the application. `db` runs PostgreSQL and stores its files in the named volume
+`interview-canvas-pgdata`. `app` builds the frontend and FastAPI image, then
+connects to PostgreSQL over Compose's private network using the hostname `db`.
+
+From the repository root:
+
+```powershell
+docker compose up --build
+```
+
+Open `http://127.0.0.1:8100/`. Compose shows logs from both services in the same
+terminal; press `Ctrl+C` to stop them. To run in the background, add `-d` and
+later use `docker compose down`. `down` removes the containers and network but
+keeps the named database volume; `docker compose down -v` also deletes the
+database data.
+
+PostgreSQL has a health check based on `pg_isready`. The `app` service has a
+`depends_on` health condition, so FastAPI starts only after PostgreSQL reports
+that it accepts connections. Port 5433 remains available for backend processes
+running directly on Windows; containers use `db:5432` internally.
+
 ## Database connection
 
 `BLUEPRINT_DATABASE_URL` selects the database. From `backend/` in PowerShell,
