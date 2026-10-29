@@ -239,9 +239,11 @@ export function Whiteboard({ elements, commit, readOnly, cursors, onCursor }: Pr
     tool === "hand" ? "cursor-grab" : tool === "pen" ? "cursor-crosshair" : tool === "select" ? "cursor-default" : "cursor-copy";
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-canvas">
+    <div data-testid="whiteboard" className="relative h-full w-full overflow-hidden bg-canvas">
       <svg
         ref={svgRef}
+        data-testid="canvas-surface"
+        aria-label="Collaborative canvas"
         className={cn("h-full w-full touch-none select-none", cursorClass)}
         onPointerDown={onBgDown}
         onPointerMove={onMove}
@@ -290,7 +292,14 @@ export function Whiteboard({ elements, commit, readOnly, cursors, onCursor }: Pr
               const Icon = item.icon;
               const sel = selected === el.id;
               return (
-                <g key={el.id} onPointerDown={(e) => onElDown(e, el)} onDoubleClick={() => !readOnly && setEditing(el.id)} className="cursor-move">
+                <g
+                  key={el.id}
+                  data-testid="canvas-node"
+                  data-component={el.component}
+                  onPointerDown={(e) => onElDown(e, el)}
+                  onDoubleClick={() => !readOnly && setEditing(el.id)}
+                  className="cursor-move"
+                >
                   <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={10} fill="var(--node)" stroke={sel ? "var(--primary)" : item.tone} strokeWidth={sel ? 2.5 : 1.5} />
                   <rect x={el.x} y={el.y} width={4} height={el.h} rx={2} fill={item.tone} />
                   <Icon x={el.x + 14} y={el.y + el.h / 2 - 10} width={20} height={20} color={item.tone} />
@@ -391,6 +400,7 @@ export function Whiteboard({ elements, commit, readOnly, cursors, onCursor }: Pr
             return (
               <button
                 key={p.id}
+                aria-label={`Add ${p.label} component`}
                 onClick={() => {
                   setComponent(p.id);
                   setTool("node");

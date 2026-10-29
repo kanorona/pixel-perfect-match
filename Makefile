@@ -1,4 +1,4 @@
-.PHONY: help setup backend-sync frontend-install backend run frontend test-backend test-frontend test
+.PHONY: help setup backend-sync frontend-install backend run frontend test-backend test-frontend test e2e
 
 PYTHON ?= python
 NPM ?= npm
@@ -16,6 +16,7 @@ help:
 	@echo "  make run            Alias for make backend"
 	@echo "  make frontend       Start Vite at http://127.0.0.1:8081"
 	@echo "  make test           Run backend and frontend tests"
+	@echo "  make e2e            Build the Compose stack and run the browser test"
 
 setup: backend-sync frontend-install
 
@@ -40,3 +41,6 @@ test-backend: backend-sync
 
 test-frontend:
 	cd frontend && $(NPM) test
+
+e2e:
+	docker compose --profile e2e up --build --abort-on-container-exit --exit-code-from e2e

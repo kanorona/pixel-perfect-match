@@ -14,3 +14,4 @@ backend/*.db-*
 frontend/.tanstack
 frontend/.nitro
 frontend/.vinxi
+e2e

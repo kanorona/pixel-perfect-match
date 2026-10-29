@@ -112,7 +112,7 @@ function Dashboard() {
             {data.map((s) => {
               const count = ((s.canvas as { elements?: unknown[] })?.elements ?? []).length;
               return (
-                <div key={s.id} className="group relative rounded-xl border bg-card p-5 transition-shadow hover:shadow-glow">
+                <div key={s.id} data-testid="session-card" className="group relative rounded-xl border bg-card p-5 transition-shadow hover:shadow-glow">
                   <div className="flex items-start justify-between gap-2">
                     <span
                       className={cn(
@@ -126,7 +126,7 @@ function Dashboard() {
                     </span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="size-7"><MoreHorizontal className="size-4" /></Button>
+                        <Button variant="ghost" size="icon" className="size-7" aria-label={`Actions for ${s.title}`}><MoreHorizontal className="size-4" /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => { navigator.clipboard.writeText(candidateLink(s.candidate_token)); toast.success("Candidate link copied"); }}>

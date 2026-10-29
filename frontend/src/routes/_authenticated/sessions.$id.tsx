@@ -84,7 +84,7 @@ function InterviewerRoom() {
               <Button variant="secondary" size="sm"><Copy className="size-4" /> Invite</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-72">
-              <div className="break-all px-2 py-1.5 font-mono text-[11px] text-muted-foreground">{link}</div>
+              <div data-testid="candidate-join-link" className="break-all px-2 py-1.5 font-mono text-[11px] text-muted-foreground">{link}</div>
               <DropdownMenuItem onClick={() => { navigator.clipboard.writeText(link); toast.success("Candidate link copied"); }}>
                 <Copy className="size-4" /> Copy candidate link
               </DropdownMenuItem>

@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Room } from "@/components/board/Room";
-import { colorFor, type Canvas, type Peer } from "@/components/board/types";
+import { colorFor, newId, type Canvas, type Peer } from "@/components/board/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Logo } from "@/components/Logo";
@@ -74,7 +74,7 @@ function JoinPage() {
             e.preventDefault();
             const n = name.trim().slice(0, 40);
             if (!n) return;
-            const id = crypto.randomUUID();
+            const id = newId();
             const peer: Peer = { id, name: n, role: "candidate", color: colorFor(id) };
             localStorage.setItem("bp-name", n);
             sessionStorage.setItem(`bp-guest-${token}`, JSON.stringify(peer));

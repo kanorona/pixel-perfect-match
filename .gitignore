@@ -8,6 +8,9 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+e2e/node_modules
+e2e/test-results
+e2e/playwright-report
 .venv/
 __pycache__/
 .pytest_cache/
