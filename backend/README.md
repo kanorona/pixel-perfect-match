@@ -70,6 +70,41 @@ want to preserve your interviews. An optional `BLUEPRINT_JWT_SECRET` overrides
 the signing key saved in the database; changing it invalidates existing access
 tokens.
 
+### PostgreSQL for local development
+
+Start PostgreSQL from the repository root. This container is only the database;
+the named volume preserves its files when the container is replaced:
+
+```powershell
+docker run -d --name interview-canvas-db -e POSTGRES_USER=sdip -e POSTGRES_PASSWORD=sdip -e POSTGRES_DB=sdip -p 5433:5432 -v interview-canvas-pgdata:/var/lib/postgresql/data postgres:16-alpine
+```
+
+Then point the locally running backend at it:
+
+```powershell
+$env:BLUEPRINT_DATABASE_URL = "postgresql://sdip:sdip@localhost:5433/sdip"
+make run
+```
+
+If GNU Make is not installed, use the backend's Python environment instead:
+
+```powershell
+python -m uv sync --directory backend
+backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload --host 127.0.0.1 --port 8001
+```
+
+`psycopg` is the PostgreSQL driver. A standard `postgresql://` URL is converted
+internally to SQLAlchemy's `postgresql+psycopg://` form. Tables and demo data are
+created on the first connection. SQLite and PostgreSQL remain separate databases;
+switching the URL does not copy existing SQLite records into PostgreSQL.
+
+The `localhost` URL above is for a backend running directly on Windows. A backend
+inside a Docker container must use a Docker-accessible hostname such as
+`host.docker.internal` or the PostgreSQL container name on a shared network.
+This workstation already has a Windows PostgreSQL service on port 5432, so the
+Docker database is published as port 5433. If 5432 is free on another machine,
+`-p 5432:5432` and `localhost:5432` work as in the original exercise.
+
 The seeded interviewer account is `demo@example.com` / `DemoPass123!`.
 Both credentials and the default public key `sb_publishable_local_demo` are
 development examples. The password is hashed with Argon2 in the database, and login
@@ -92,6 +127,14 @@ The tests create a fresh temporary SQLite database for each case and cover
 authentication, session ownership, guest tokens, canvas rules, Realtime, and
 data surviving a restart. The local backend
 does not send confirmation email: new accounts are active immediately.
+
+With the local PostgreSQL container running on port 5433, run the optional
+integration test with:
+
+```powershell
+$env:BLUEPRINT_TEST_POSTGRES_URL = "postgresql://sdip:sdip@localhost:5433/sdip"
+backend\.venv\Scripts\python.exe -m pytest backend\tests\test_postgres.py -q
+```
 
 ## Modules
 

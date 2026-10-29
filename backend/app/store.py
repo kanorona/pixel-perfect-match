@@ -20,6 +20,14 @@ DEMO_PASSWORD = "DemoPass123!"
 DEFAULT_DATABASE_URL = f"sqlite:///{(Path(__file__).resolve().parents[1] / 'blueprint.db').as_posix()}"
 
 
+def normalize_database_url(database_url: str) -> str:
+    """Select psycopg when a standard PostgreSQL URL omits its Python driver."""
+    url = make_url(database_url)
+    if url.drivername == "postgresql":
+        return url.set(drivername="postgresql+psycopg").render_as_string(hide_password=False)
+    return database_url
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -93,7 +101,8 @@ def _user(row: UserRow | None) -> User | None:
 
 class DatabaseStore:
     def __init__(self, database_url: str | None = None) -> None:
-        self.database_url = database_url or os.getenv("BLUEPRINT_DATABASE_URL", DEFAULT_DATABASE_URL)
+        configured_url = database_url or os.getenv("BLUEPRINT_DATABASE_URL", DEFAULT_DATABASE_URL)
+        self.database_url = normalize_database_url(configured_url)
         connect_args = {"check_same_thread": False} if make_url(self.database_url).get_backend_name() == "sqlite" else {}
         self.engine = create_engine(self.database_url, connect_args=connect_args, pool_pre_ping=True)
         self.Session = sessionmaker(self.engine, expire_on_commit=False)
@@ -111,6 +120,9 @@ class DatabaseStore:
             user_id = str(uuid5(NAMESPACE_DNS, "blueprint-demo-user"))
             db.add(UserRow(id=user_id, email=DEMO_EMAIL,
                            password_hash=self.passwords.hash(DEMO_PASSWORD), token_version=0))
+            # PostgreSQL enforces the owner foreign key, so persist the user
+            # before inserting the seeded interviews in this transaction.
+            db.flush()
             for title, status, prompt in (
                 ("Design a URL shortener", "live", "Design a short-link service for a million users."),
                 ("Design a chat system", "draft", "Discuss messages, delivery and scaling."),

@@ -1,4 +1,4 @@
-.PHONY: help setup backend-sync frontend-install backend frontend test-backend test-frontend test
+.PHONY: help setup backend-sync frontend-install backend run frontend test-backend test-frontend test
 
 PYTHON ?= python
 NPM ?= npm
@@ -13,6 +13,7 @@ help:
 	@echo "Run from the repository root:"
 	@echo "  make setup          Install backend and frontend dependencies"
 	@echo "  make backend        Start FastAPI at http://127.0.0.1:8001"
+	@echo "  make run            Alias for make backend"
 	@echo "  make frontend       Start Vite at http://127.0.0.1:8081"
 	@echo "  make test           Run backend and frontend tests"
 
@@ -26,6 +27,8 @@ frontend-install:
 
 backend: backend-sync
 	cd backend && $(BACKEND_PYTHON) -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
+
+run: backend
 
 frontend:
 	cd frontend && $(NPM) run dev -- --host 127.0.0.1 --port 8081
