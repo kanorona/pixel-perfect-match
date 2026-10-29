@@ -1,0 +1,314 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >-
+  Blueprint Interviews on one EC2 instance. CloudFront terminates HTTPS;
+  Caddy proxies to FastAPI; PostgreSQL runs on the private Docker network.
+  One app process is intentional because realtime rooms are held in memory.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Source
+        Parameters: [RepoUrl, RepoRef]
+      - Label:
+          default: Compute
+        Parameters: [InstanceType, RootVolumeSize, LatestAmiId, BuildxVersion]
+      - Label:
+          default: Network
+        Parameters: [CloudFrontPrefixListId]
+
+Parameters:
+  RepoUrl:
+    Type: String
+    Default: https://github.com/kanorona/pixel-perfect-match.git
+    Description: Public GitHub repository cloned by the instance.
+    AllowedPattern: ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(?:\.git)?$
+
+  RepoRef:
+    Type: String
+    Default: main
+    Description: Branch, tag, or commit to deploy.
+    AllowedPattern: ^[A-Za-z0-9._/-]+$
+
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.small, t3.medium, t3.large]
+    Description: t3.small is suitable for the classroom deployment.
+
+  RootVolumeSize:
+    Type: Number
+    Default: 20
+    MinValue: 16
+    MaxValue: 100
+    Description: GiB for Docker images, build cache, and PostgreSQL data.
+
+  BuildxVersion:
+    Type: String
+    Default: v0.36.1
+    AllowedPattern: ^v[0-9]+\.[0-9]+\.[0-9]+$
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 x86_64 AMI from the public SSM parameter.
+
+  CloudFrontPrefixListId:
+    Type: String
+    Description: >-
+      Regional ID of com.amazonaws.global.cloudfront.origin-facing. The deploy
+      script resolves it automatically so port 80 accepts only CloudFront.
+    AllowedPattern: ^pl-[a-f0-9]+$
+
+Conditions:
+  IsUsEast1: !Equals [!Ref "AWS::Region", us-east-1]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-igw
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-public
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTP from CloudFront origin-facing servers only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - Description: CloudFront to Caddy
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: !Ref CloudFrontPrefixListId
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-sg
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Lets the Blueprint instance use AWS Systems Manager.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-role
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-eip
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: !Ref RootVolumeSize
+            Encrypted: true
+            DeleteOnTermination: true
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          exec > >(tee -a /var/log/blueprint-bootstrap.log) 2>&1
+
+          echo "=== install Docker and Git ==="
+          dnf install -y docker git
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+
+          echo "=== install Docker Compose and buildx ==="
+          install -d /usr/local/lib/docker/cli-plugins
+          curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          curl -fsSL "https://github.com/docker/buildx/releases/download/${BuildxVersion}/buildx-${BuildxVersion}.linux-amd64" \
+            -o /usr/local/lib/docker/cli-plugins/docker-buildx
+          chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose \
+            /usr/local/lib/docker/cli-plugins/docker-buildx
+
+          echo "=== add swap for the Node frontend build ==="
+          if [ ! -f /swapfile ]; then
+            dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+            chmod 600 /swapfile
+            mkswap /swapfile
+            swapon /swapfile
+            echo "/swapfile none swap sw 0 0" >> /etc/fstab
+          fi
+
+          echo "=== clone source ==="
+          git clone "${RepoUrl}" /opt/blueprint
+          cd /opt/blueprint
+          git checkout "${RepoRef}"
+
+          echo "=== generate local database secrets ==="
+          umask 077
+          {
+            echo "POSTGRES_USER=blueprint"
+            echo "POSTGRES_DB=blueprint"
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)"
+          } > .env
+
+          echo "=== build and start application ==="
+          docker compose -f docker-compose.aws.yaml up -d --build
+
+          echo "=== wait for local health check ==="
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1/ >/dev/null; then
+              echo "Blueprint is ready"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Application did not become healthy" >&2
+          docker compose -f docker-compose.aws.yaml ps
+          docker compose -f docker-compose.aws.yaml logs --tail 200
+          exit 1
+
+  ElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIp.AllocationId
+      InstanceId: !Ref Instance
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: ElasticIpAssociation
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub ${AWS::StackName} - Blueprint Interviews
+        PriceClass: PriceClass_100
+        HttpVersion: http2and3
+        Origins:
+          - Id: blueprint-instance
+            DomainName: !Sub
+              - ec2-${DashedIp}.${DnsSuffix}
+              - DashedIp: !Join ["-", !Split [".", !Ref ElasticIp]]
+                DnsSuffix: !If
+                  - IsUsEast1
+                  - compute-1.amazonaws.com
+                  - !Sub ${AWS::Region}.compute.amazonaws.com
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+              HTTPPort: 80
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 60
+        DefaultCacheBehavior:
+          TargetOriginId: blueprint-instance
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          AllowedMethods: [DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT]
+          CachedMethods: [GET, HEAD]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        CustomErrorResponses:
+          - ErrorCode: 502
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 503
+            ErrorCachingMinTTL: 0
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+
+Outputs:
+  ApplicationUrl:
+    Description: HTTPS URL served by CloudFront. Allow several minutes after creation.
+    Value: !Sub https://${CloudFrontDistribution.DomainName}
+
+  InstanceId:
+    Value: !Ref Instance
+
+  ElasticIp:
+    Description: Stable origin IP. Port 80 accepts only CloudFront.
+    Value: !Ref ElasticIp
+
+  SessionManagerCommand:
+    Description: Open a shell without SSH or an EC2 key pair.
+    Value: !Sub aws ssm start-session --target ${Instance}
+
+  BootstrapLog:
+    Description: Inspect this file through Session Manager if startup fails.
+    Value: /var/log/blueprint-bootstrap.log
