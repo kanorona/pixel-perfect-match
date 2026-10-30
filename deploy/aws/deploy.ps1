@@ -45,7 +45,7 @@ if ($LASTEXITCODE -ne 0) {
 $prefixListId = aws ec2 describe-managed-prefix-lists `
     --region $Region `
     --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing `
-    --query "Entries[0].PrefixListId" `
+    --query "PrefixLists[0].PrefixListId"  `
     --output text
 if ($LASTEXITCODE -ne 0 -or -not $prefixListId -or $prefixListId -eq "None") {
     throw "Could not resolve the CloudFront origin-facing managed prefix list in $Region."
