@@ -6,6 +6,12 @@ from app.main import create_app
 from app.store import DEMO_EMAIL, DEMO_PASSWORD
 
 
+@pytest.fixture(autouse=True)
+def local_demo_environment(monkeypatch):
+    monkeypatch.setenv("BLUEPRINT_ENV", "development")
+    monkeypatch.setenv("BLUEPRINT_SEED_DEMO", "true")
+
+
 @pytest.fixture
 def client(tmp_path):
     database_url = f"sqlite:///{(tmp_path / 'test.db').as_posix()}"

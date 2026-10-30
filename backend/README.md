@@ -12,6 +12,8 @@ From `backend/`:
 
 ```sh
 uv sync
+export BLUEPRINT_ENV=development
+export BLUEPRINT_SEED_DEMO=true
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
@@ -20,6 +22,8 @@ works, run these commands from `backend/` instead:
 
 ```powershell
 python -m uv sync
+$env:BLUEPRINT_ENV = "development"
+$env:BLUEPRINT_SEED_DEMO = "true"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
@@ -33,7 +37,7 @@ From the repository root, with Docker installed:
 
 ```powershell
 docker build -t blueprint .
-docker run --rm --name blueprint -p 8001:8001 -v blueprint-data:/data blueprint
+docker run --rm --name blueprint -p 127.0.0.1:8001:8001 -e BLUEPRINT_ENV=development -e BLUEPRINT_SEED_DEMO=true -v blueprint-data:/data blueprint
 ```
 
 Open `http://127.0.0.1:8001/`. FastAPI serves the frontend and the API on the
@@ -45,8 +49,9 @@ To use another database, pass `BLUEPRINT_DATABASE_URL` to `docker run` and insta
 its Python driver in the backend dependencies before building.
 
 The Docker build installs frontend packages for Linux from `package.json`.
-It uses the local demo publishable key; replace that configuration before
-exposing the app publicly.
+The publishable key is public client configuration, not an authentication secret.
+The image defaults to production mode with demo seeding disabled. Only enable the
+development flags on a local development server.
 
 ### Run the application stack with Docker Compose
 
@@ -67,6 +72,10 @@ later use `docker compose down`. `down` removes the containers and network but
 keeps the named database volume; `docker compose down -v` also deletes the
 database data.
 
+This local Compose file explicitly enables development demo data and binds its
+published ports to `127.0.0.1`. The AWS Compose file forces production mode and
+disables demo seeding.
+
 PostgreSQL has a health check based on `pg_isready`. The `app` service has a
 `depends_on` health condition, so FastAPI starts only after PostgreSQL reports
 that it accepts connections. Port 5433 remains available for backend processes
@@ -84,8 +93,10 @@ $env:BLUEPRINT_DATABASE_URL = "sqlite:///./my-interviews.db"
 
 If the variable is unset, the server uses `backend/blueprint.db` regardless of
 the current working directory. SQLAlchemy creates missing tables at startup and
-seeds the demo account and two interviews only when the demo account does not
-exist. The database URL can later select another SQLAlchemy-supported database;
+seeds the demo account and two interviews only when **both**
+`BLUEPRINT_ENV=development` and `BLUEPRINT_SEED_DEMO=true`, and the demo account
+does not exist. Defaults are `production` and `false`. Enabling demo seeding
+outside development fails startup before connecting to the database. The database URL can later select another SQLAlchemy-supported database;
 its driver must also be installed with `uv`. Schema changes to an existing
 database will need migrations; `create_all` only creates missing tables.
 
@@ -118,8 +129,8 @@ backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --rel
 ```
 
 `psycopg` is the PostgreSQL driver. A standard `postgresql://` URL is converted
-internally to SQLAlchemy's `postgresql+psycopg://` form. Tables and demo data are
-created on the first connection. SQLite and PostgreSQL remain separate databases;
+internally to SQLAlchemy's `postgresql+psycopg://` form. Tables are created on the
+first connection; demo data requires both development flags. SQLite and PostgreSQL remain separate databases;
 switching the URL does not copy existing SQLite records into PostgreSQL.
 
 The `localhost` URL above is for a backend running directly on Windows. A backend
@@ -129,7 +140,7 @@ This workstation already has a Windows PostgreSQL service on port 5432, so the
 Docker database is published as port 5433. If 5432 is free on another machine,
 `-p 5432:5432` and `localhost:5432` work as in the original exercise.
 
-The seeded interviewer account is `demo@example.com` / `DemoPass123!`.
+The local-only seeded interviewer account is `demo@example.com` / `DemoPass123!`.
 Both credentials and the default public key `sb_publishable_local_demo` are
 development examples. The password is hashed with Argon2 in the database, and login
 returns a signed bearer token. **Bearer token** means the caller proves its
@@ -140,6 +151,15 @@ to this local backend. The client is an SDK (a library that sends HTTP and
 WebSocket requests); this backend implements the API shapes it expects. An
 existing `frontend/.env.local` overrides the tracked development settings.
 Start both servers before opening the dashboard.
+
+Production starts with no demo users or example interviews. Create an individual
+user through the registration screen. Disabling seeding does not delete users
+already stored in an existing database; do not reuse a development database for
+deployment. `make backend` and `make run` enable both local demo flags explicitly.
+
+`GET /health/ready` executes a database query and returns 200 when ready or a
+generic 503 on a database error. It never returns connection details. Docker
+health checks and the AWS startup check use this endpoint.
 
 ## Test
 

@@ -18,6 +18,8 @@ FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    BLUEPRINT_ENV=production \
+    BLUEPRINT_SEED_DEMO=false \
     PATH="/app/backend/.venv/bin:$PATH" \
     BLUEPRINT_DATABASE_URL=sqlite:////data/blueprint.db
 

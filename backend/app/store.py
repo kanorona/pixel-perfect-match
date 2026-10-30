@@ -8,7 +8,7 @@ from secrets import token_hex, token_urlsafe
 from uuid import NAMESPACE_DNS, uuid4, uuid5
 
 from pwdlib import PasswordHash
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, create_engine, delete, select
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, create_engine, delete, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -101,6 +101,11 @@ def _user(row: UserRow | None) -> User | None:
 
 class DatabaseStore:
     def __init__(self, database_url: str | None = None) -> None:
+        seed_demo = os.getenv("BLUEPRINT_SEED_DEMO", "false").lower()
+        if seed_demo not in {"true", "false"}:
+            raise ValueError("BLUEPRINT_SEED_DEMO must be true or false")
+        if seed_demo == "true" and os.getenv("BLUEPRINT_ENV", "production") != "development":
+            raise ValueError("Demo seeding is only allowed with BLUEPRINT_ENV=development")
         configured_url = database_url or os.getenv("BLUEPRINT_DATABASE_URL", DEFAULT_DATABASE_URL)
         self.database_url = normalize_database_url(configured_url)
         connect_args = {"check_same_thread": False} if make_url(self.database_url).get_backend_name() == "sqlite" else {}
@@ -108,10 +113,15 @@ class DatabaseStore:
         self.Session = sessionmaker(self.engine, expire_on_commit=False)
         self.passwords = PasswordHash.recommended()
         Base.metadata.create_all(self.engine)
-        self._seed()
+        if seed_demo == "true":
+            self._seed()
 
     def close(self) -> None:
         self.engine.dispose()
+
+    def check_ready(self) -> None:
+        with self.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
 
     def _seed(self) -> None:
         with self.Session.begin() as db:

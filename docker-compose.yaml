@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: sdip
       POSTGRES_DB: sdip
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -21,8 +21,10 @@ services:
       context: .
     environment:
       BLUEPRINT_DATABASE_URL: postgresql://sdip:sdip@db:5432/sdip
+      BLUEPRINT_ENV: development
+      BLUEPRINT_SEED_DEMO: "true"
     ports:
-      - "8100:8001"
+      - "127.0.0.1:8100:8001"
     networks:
       default:
         aliases:
@@ -31,7 +33,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready', timeout=3)"]
       interval: 5s
       timeout: 5s
       retries: 10

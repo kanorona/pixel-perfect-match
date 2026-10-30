@@ -1,4 +1,6 @@
 .git
+.env
+deploy/aws/*.parameters.json
 .venv
 **/.venv
 **/__pycache__

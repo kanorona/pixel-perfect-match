@@ -6,6 +6,8 @@ Description: >-
   One app process is intentional because realtime rooms are held in memory.
 
 Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label:
@@ -16,7 +18,7 @@ Metadata:
         Parameters: [InstanceType, RootVolumeSize, LatestAmiId, BuildxVersion]
       - Label:
           default: Network
-        Parameters: [CloudFrontPrefixListId]
+        Parameters: [CloudFrontPrefixListId, OriginVerifyToken]
 
 Parameters:
   RepoUrl:
@@ -60,6 +62,17 @@ Parameters:
       Regional ID of com.amazonaws.global.cloudfront.origin-facing. The deploy
       script resolves it automatically so port 80 accepts only CloudFront.
     AllowedPattern: ^pl-[a-f0-9]+$
+
+  OriginVerifyToken:
+    Type: String
+    NoEcho: true
+    MinLength: 64
+    MaxLength: 64
+    AllowedPattern: ^[a-f0-9]{64}$
+    Description: >-
+      Private random 256-bit origin token, supplied outside Git. No default.
+      Privileged readers of EC2 UserData or CloudFront origin configuration can
+      retrieve it; NoEcho only masks parameter displays.
 
 Conditions:
   IsUsEast1: !Equals [!Ref "AWS::Region", us-east-1]
@@ -168,6 +181,23 @@ Resources:
 
   Instance:
     Type: AWS::EC2::Instance
+    DependsOn:
+      - DefaultRoute
+      - PublicSubnetRouteTableAssociation
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT30M
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          One educational app process; disposable PostgreSQL on encrypted root
+          disk. Local health checks gate creation before EIP and CloudFront.
+        must:
+          - Signal success only after database, API, frontend and origin checks pass.
+          - Keep network routes ready before bootstrap; initial public IP permits downloads.
+          - Keep demo seeding disabled and never log the origin token.
+          - Root disk data is intentionally disposable when the instance is deleted.
     Properties:
       ImageId: !Ref LatestAmiId
       InstanceType: !Ref InstanceType
@@ -191,18 +221,60 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           set -euo pipefail
+          umask 077
+          touch /var/log/blueprint-bootstrap.log
+          chmod 0600 /var/log/blueprint-bootstrap.log
           exec > >(tee -a /var/log/blueprint-bootstrap.log) 2>&1
 
+          finish() {
+            result=$?
+            trap - EXIT
+            rm -f /run/blueprint-origin.curl
+            if [ ! -x /opt/aws/bin/cfn-signal ]; then
+              echo "cfn-signal unavailable; CreationPolicy will time out" >&2
+              exit 1
+            fi
+            for attempt in $(seq 1 5); do
+              if timeout 30 /opt/aws/bin/cfn-signal --exit-code "$result" \
+                --stack '${AWS::StackName}' --resource Instance --region '${AWS::Region}'; then
+                exit "$result"
+              fi
+              sleep 5
+            done
+            echo "Could not deliver resource signal; CreationPolicy will time out" >&2
+            exit 1
+          }
+          trap finish EXIT
+
+          # Bound all bootstrap work to 24 minutes, leaving time to signal within PT30M.
+          timeout --signal=TERM --kill-after=15s 1440 bash <<'BOOTSTRAP'
+          set -euo pipefail
+          umask 077
+          retry() {
+            for attempt in $(seq 1 4); do
+              if "$@"; then
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+
+          echo "=== install signaling helper ==="
+          retry timeout 120 dnf install -y aws-cfn-bootstrap
+
           echo "=== install Docker and Git ==="
-          dnf install -y docker git
+          retry timeout 180 dnf install -y docker git openssl
           systemctl enable --now docker
           usermod -aG docker ec2-user
 
           echo "=== install Docker Compose and buildx ==="
           install -d /usr/local/lib/docker/cli-plugins
-          curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+          curl -fsSL --retry 3 --retry-delay 5 --connect-timeout 10 --max-time 120 \
+            "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
             -o /usr/local/lib/docker/cli-plugins/docker-compose
-          curl -fsSL "https://github.com/docker/buildx/releases/download/${BuildxVersion}/buildx-${BuildxVersion}.linux-amd64" \
+          curl -fsSL --retry 3 --retry-delay 5 --connect-timeout 10 --max-time 120 \
+            "https://github.com/docker/buildx/releases/download/${BuildxVersion}/buildx-${BuildxVersion}.linux-amd64" \
             -o /usr/local/lib/docker/cli-plugins/docker-buildx
           chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose \
             /usr/local/lib/docker/cli-plugins/docker-buildx
@@ -217,9 +289,12 @@ Resources:
           fi
 
           echo "=== clone source ==="
-          git clone "${RepoUrl}" /opt/blueprint
+          install -d -m 0700 /opt/blueprint
           cd /opt/blueprint
-          git checkout "${RepoRef}"
+          git init
+          git remote add origin '${RepoUrl}'
+          retry timeout 120 git fetch --depth 1 origin '${RepoRef}'
+          git checkout --detach FETCH_HEAD
 
           echo "=== generate local database secrets ==="
           umask 077
@@ -227,23 +302,42 @@ Resources:
             echo "POSTGRES_USER=blueprint"
             echo "POSTGRES_DB=blueprint"
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)"
+            printf '%s\n' 'BLUEPRINT_ORIGIN_TOKEN=${OriginVerifyToken}'
           } > .env
+          chmod 0600 .env
+
+          # curl reads the sensitive header from a private file, not process arguments.
+          printf 'header = "X-Blueprint-Origin-Token: %s"\n' '${OriginVerifyToken}' > /run/blueprint-origin.curl
 
           echo "=== build and start application ==="
-          docker compose -f docker-compose.aws.yaml up -d --build
+          docker compose -f docker-compose.aws.yaml config --quiet
+          retry timeout 180 docker compose -f docker-compose.aws.yaml pull postgres caddy
+          timeout 900 docker compose -f docker-compose.aws.yaml build app
+          docker compose -f docker-compose.aws.yaml up -d --no-build
 
-          echo "=== wait for local health check ==="
-          for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1/ >/dev/null; then
+          echo "=== wait for database, API, frontend and origin protection ==="
+          for attempt in $(seq 1 90); do
+            if docker compose -f docker-compose.aws.yaml exec -T postgres sh -c \
+                'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1 \
+              && curl -fsS --connect-timeout 2 --max-time 5 --config /run/blueprint-origin.curl \
+                http://127.0.0.1/health/ready >/dev/null \
+              && curl -fsS --connect-timeout 2 --max-time 5 --config /run/blueprint-origin.curl \
+                http://127.0.0.1/ >/dev/null \
+              && [ "$(curl -s --connect-timeout 2 --max-time 5 -o /dev/null -w '%{http_code}' \
+                http://127.0.0.1/health/ready)" = 403 ] \
+              && [ "$(curl -s --connect-timeout 2 --max-time 5 -H 'X-Blueprint-Origin-Token: invalid' \
+                -o /dev/null -w '%{http_code}' http://127.0.0.1/health/ready)" = 403 ]; then
+              rm -f /run/blueprint-origin.curl
               echo "Blueprint is ready"
               exit 0
             fi
             sleep 5
           done
+          rm -f /run/blueprint-origin.curl
           echo "Application did not become healthy" >&2
           docker compose -f docker-compose.aws.yaml ps
-          docker compose -f docker-compose.aws.yaml logs --tail 200
           exit 1
+          BOOTSTRAP
 
   ElasticIpAssociation:
     Type: AWS::EC2::EIPAssociation
@@ -254,6 +348,12 @@ Resources:
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     DependsOn: ElasticIpAssociation
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: HTTPS edge and shared origin header; avoids extra services for this demo.
+        must:
+          - Caddy must require the same private OriginVerifyToken on every request.
+          - Keep origin restricted to the CloudFront prefix list; token is not viewer authentication.
     Properties:
       DistributionConfig:
         Enabled: true
@@ -262,6 +362,9 @@ Resources:
         HttpVersion: http2and3
         Origins:
           - Id: blueprint-instance
+            OriginCustomHeaders:
+              - HeaderName: X-Blueprint-Origin-Token
+                HeaderValue: !Ref OriginVerifyToken
             DomainName: !Sub
               - ec2-${DashedIp}.${DnsSuffix}
               - DashedIp: !Join ["-", !Split [".", !Ref ElasticIp]]

@@ -1,12 +1,11 @@
 [CmdletBinding()]
 param(
     [string]$StackName = "blueprint-interviews",
-    [string]$Region = "us-east-1",
-    [string]$Profile = "",
-    [string]$RepoUrl = "https://github.com/kanorona/pixel-perfect-match.git",
-    [string]$RepoRef = "main",
-    [ValidateSet("t3.small", "t3.medium", "t3.large")]
-    [string]$InstanceType = "t3.small"
+    [ValidateSet("us-east-2")]
+    [string]$Region = "us-east-2",
+    [string]$Profile = "blueprint-dev",
+    [Parameter(Mandatory)]
+    [string]$ParametersFile
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,34 +15,37 @@ if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
     throw "AWS CLI is not installed or is not available in PATH. Install AWS CLI v2 and authenticate before running this script."
 }
 
-if ($Profile) {
-    $env:AWS_PROFILE = $Profile
+$awsContext = @("--profile", $Profile, "--region", $Region, "--no-cli-pager")
+$resolvedParametersFile = (Resolve-Path -LiteralPath $ParametersFile).Path
+$repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../.."))
+if ($resolvedParametersFile.StartsWith($repoRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Keep the private parameters file outside the repository."
+}
+$parameters = @(Get-Content -Raw -LiteralPath $resolvedParametersFile | ConvertFrom-Json)
+$keys = @($parameters | ForEach-Object { $_.ParameterKey })
+if (($keys | Select-Object -Unique).Count -ne $keys.Count) {
+    throw "Duplicate parameter keys are not allowed."
+}
+$originToken = @($parameters | Where-Object ParameterKey -eq "OriginVerifyToken")
+$sourceRef = @($parameters | Where-Object ParameterKey -eq "RepoRef")
+if ($originToken.Count -ne 1 -or $originToken[0].ParameterValue -cnotmatch '^[a-f0-9]{64}$') {
+    throw "The private file must contain one OriginVerifyToken with 64 lowercase hexadecimal characters."
+}
+if ($sourceRef.Count -ne 1 -or $sourceRef[0].ParameterValue -cnotmatch '^[a-f0-9]{40}$') {
+    throw "RepoRef must be the full SHA of an already published commit."
 }
 
-aws sts get-caller-identity --region $Region | Out-Null
+aws @awsContext sts get-caller-identity | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    throw "AWS authentication failed. Configure credentials or run 'aws sso login --profile <profile>'."
+    throw "AWS authentication failed. Renew the session for the selected profile."
 }
 
-if ($RepoUrl -eq "https://github.com/kanorona/pixel-perfect-match.git" -and $RepoRef -eq "main" -and (Get-Command git -ErrorAction SilentlyContinue)) {
-    git fetch origin main --quiet
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not refresh origin/main before deployment."
-    }
-    $localHead = git rev-parse HEAD
-    $remoteHead = git rev-parse origin/main
-    if ($localHead -ne $remoteHead) {
-        throw "Local HEAD ($localHead) is not origin/main ($remoteHead). Push the deployment commit or pass a RepoRef that already exists on GitHub."
-    }
-}
-
-aws cloudformation validate-template --region $Region --template-body "file://$template" | Out-Null
+aws @awsContext cloudformation validate-template --template-body "file://$template" | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "AWS rejected the CloudFormation template."
 }
 
-$prefixListId = aws ec2 describe-managed-prefix-lists `
-    --region $Region `
+$prefixListId = aws @awsContext ec2 describe-managed-prefix-lists `
     --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing `
     --query "PrefixLists[0].PrefixListId"  `
     --output text
@@ -51,25 +53,22 @@ if ($LASTEXITCODE -ne 0 -or -not $prefixListId -or $prefixListId -eq "None") {
     throw "Could not resolve the CloudFront origin-facing managed prefix list in $Region."
 }
 
-Write-Host "Deploying stack '$StackName' to $Region..."
-aws cloudformation deploy `
-    --region $Region `
-    --stack-name $StackName `
-    --template-file $template `
-    --capabilities CAPABILITY_IAM `
-    --parameter-overrides `
-        "RepoUrl=$RepoUrl" `
-        "RepoRef=$RepoRef" `
-        "InstanceType=$InstanceType" `
-        "CloudFrontPrefixListId=$prefixListId" `
-    --no-fail-on-empty-changeset
-if ($LASTEXITCODE -ne 0) {
-    throw "CloudFormation deployment failed. Inspect the stack events in the AWS console."
+$providedPrefixList = @($parameters | Where-Object ParameterKey -eq "CloudFrontPrefixListId")
+if ($providedPrefixList.Count -ne 1 -or $providedPrefixList[0].ParameterValue -ne $prefixListId) {
+    throw "CloudFrontPrefixListId in the private parameters file does not match the selected Region."
 }
 
-Write-Host "Stack outputs:"
-aws cloudformation describe-stacks `
-    --region $Region `
+$changeSetName = "review-" + $sourceRef[0].ParameterValue.Substring(0, 7) + "-" + [guid]::NewGuid().ToString("N")
+Write-Host "Preparing change set '$changeSetName' for '$StackName' in $Region. Execution is separate."
+# Deliberately preview only. This script never executes a change set.
+aws @awsContext cloudformation create-change-set `
     --stack-name $StackName `
-    --query "Stacks[0].Outputs[].{Name:OutputKey,Value:OutputValue}" `
-    --output table
+    --change-set-name $changeSetName `
+    --change-set-type CREATE `
+    --template-body "file://$template" `
+    --capabilities CAPABILITY_IAM `
+    --parameters "file://$resolvedParametersFile"
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not prepare the change set. No execution was requested."
+}
+Write-Host "Review describe-change-set and describe-events before requesting execution approval."

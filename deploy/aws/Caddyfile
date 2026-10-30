@@ -1,10 +1,19 @@
 {
 	auto_https off
+	admin off
 }
 
 :80 {
 	encode zstd gzip
-	reverse_proxy app:8001
+	@authorized expression `{env.BLUEPRINT_ORIGIN_TOKEN}.matches('^[a-f0-9]{64}$') && {http.request.header.X-Blueprint-Origin-Token} == {env.BLUEPRINT_ORIGIN_TOKEN}`
+	handle @authorized {
+		reverse_proxy app:8001 {
+			header_up -X-Blueprint-Origin-Token
+		}
+	}
+	handle {
+		respond "Forbidden" 403
+	}
 
 	header {
 		X-Content-Type-Options nosniff

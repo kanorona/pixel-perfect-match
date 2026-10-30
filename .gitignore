@@ -24,6 +24,8 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+/.env
+/deploy/aws/*.parameters.json
 
 # Wrangler / Cloudflare
 .wrangler/

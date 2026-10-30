@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth import ApiError, AuthService
 from app.routers import auth, realtime, rpc, sessions
@@ -41,6 +42,14 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(sessions.router)
     app.include_router(rpc.router)
     app.include_router(realtime.router)
+
+    @app.get("/health/ready", include_in_schema=False)
+    def ready() -> JSONResponse:
+        try:
+            app.state.store.check_ready()
+        except SQLAlchemyError:
+            return JSONResponse(status_code=503, content={"status": "unavailable"})
+        return JSONResponse(content={"status": "ready"})
 
     static_dir = Path(os.getenv("BLUEPRINT_STATIC_DIR", Path(__file__).resolve().parents[1] / "static"))
     shell = static_dir / "_shell.html"

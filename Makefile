@@ -26,6 +26,8 @@ backend-sync:
 frontend-install:
 	cd frontend && $(NPM) install
 
+backend: export BLUEPRINT_ENV=development
+backend: export BLUEPRINT_SEED_DEMO=true
 backend: backend-sync
 	cd backend && $(BACKEND_PYTHON) -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 
