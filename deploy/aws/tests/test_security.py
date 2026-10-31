@@ -5,6 +5,7 @@ Set BLUEPRINT_RUN_DOCKER_TESTS=1 to build an isolated, disposable Compose stack.
 """
 
 import base64
+import io
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,9 @@ import secrets
 import shutil
 import socket
 import subprocess
+import tarfile
 import tempfile
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -22,6 +25,160 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
+PERMISSIONS_FIX = "RUN chmod -R a+rX /app/backend/app /app/backend/static"
+_restricted_images = None
+
+
+def restricted_context(destination, dockerfile):
+    """Send real root-owned 0700/0600 Linux metadata to the Docker daemon.
+
+    A Windows bind mount cannot reproduce the permissions of the EC2 checkout.
+    Use an explicit allowlist so private .env files never enter the context.
+    """
+    files = {
+        "Dockerfile": dockerfile.encode(),
+        ".dockerignore": (ROOT / ".dockerignore").read_bytes(),
+        "backend/pyproject.toml": (ROOT / "backend/pyproject.toml").read_bytes(),
+        "backend/uv.lock": (ROOT / "backend/uv.lock").read_bytes(),
+    }
+    excluded = {"node_modules", "dist", ".output", ".tanstack", ".nitro", ".vinxi", "__pycache__"}
+    for source in [ROOT / "backend/app", ROOT / "frontend"]:
+        for directory, directories, filenames in os.walk(source):
+            directories[:] = [name for name in directories if name not in excluded]
+            for name in filenames:
+                if name.startswith(".env") or name.endswith(".pyc") or name == "package-lock.json":
+                    continue
+                path = Path(directory) / name
+                if path.is_symlink():
+                    raise AssertionError("Regression context must not include symlinks")
+                files[path.relative_to(ROOT).as_posix()] = path.read_bytes()
+    directories = {"."}
+    for name in files:
+        directories.update(parent.as_posix() for parent in Path(name).parents if parent.as_posix() != ".")
+    with tarfile.open(destination, "w") as archive:
+        for name in sorted(directories, key=lambda value: (value.count("/"), value)):
+            entry = tarfile.TarInfo(name)
+            entry.type = tarfile.DIRTYPE
+            entry.mode = 0o700
+            entry.uid = entry.gid = 0
+            entry.uname = entry.gname = "root"
+            archive.addfile(entry)
+        for name, content in sorted(files.items()):
+            entry = tarfile.TarInfo(name)
+            entry.mode = 0o600
+            entry.uid = entry.gid = 0
+            entry.uname = entry.gname = "root"
+            entry.size = len(content)
+            archive.addfile(entry, io.BytesIO(content))
+    with tarfile.open(destination) as archive:
+        entries = archive.getmembers()
+        assert all(entry.uid == entry.gid == 0 for entry in entries)
+        assert all(entry.mode == (0o700 if entry.isdir() else 0o600) for entry in entries)
+        assert not any(Path(entry.name).name.startswith(".env") for entry in entries)
+
+
+def restricted_images():
+    global _restricted_images
+    if _restricted_images is not None:
+        return _restricted_images
+    suffix = uuid.uuid4().hex[:10]
+    images = {name: f"blueprint-permissions-{suffix}-{name}:local" for name in ["baseline", "fixed"]}
+    unittest.addModuleCleanup(lambda: subprocess.run(
+        ["docker", "image", "rm", *images.values()], capture_output=True, check=True,
+    ))
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert dockerfile.count(PERMISSIONS_FIX) == 1, "Update the negative-control fixture when the fix changes"
+    with tempfile.TemporaryDirectory() as directory:
+        for name in images:
+            source = dockerfile if name == "fixed" else dockerfile.replace(PERMISSIONS_FIX, "")
+            context = Path(directory) / f"{name}.tar"
+            restricted_context(context, source)
+            with context.open("rb") as stream:
+                result = subprocess.run(
+                    ["docker", "build", "--tag", images[name], "-"], stdin=stream,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1200,
+                )
+            if result.returncode:
+                raise AssertionError(f"Restricted-context {name} image build failed:\n{result.stderr[-5000:]}")
+    _restricted_images = images
+    return images
+
+
+@unittest.skipUnless(os.getenv("BLUEPRINT_RUN_DOCKER_TESTS") == "1", "Docker checks require explicit opt-in")
+class RestrictedPermissions(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.images = restricted_images()
+
+    def test_negative_control_reproduces_permission_error(self):
+        result = subprocess.run(
+            ["docker", "run", "--rm", "--network", "none", self.images["baseline"],
+             "python", "-c", "import app.main"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PermissionError", result.stderr)
+        self.assertIn("/app/backend/app", result.stderr)
+
+    def test_appuser_can_import_and_read_all_runtime_files(self):
+        probe = '''import importlib, json, os, pathlib, pwd, sys
+assert os.geteuid() != 0
+assert pwd.getpwuid(os.geteuid()).pw_name == "appuser"
+for root in [pathlib.Path("/app/backend/app"), pathlib.Path("/app/backend/static")]:
+    for path in [root, *root.rglob("*")]:
+        assert path.stat().st_uid == 0, "Runtime source ownership changed"
+        assert os.access(path, os.R_OK), "Runtime file is unreadable"
+        if path.is_dir():
+            assert os.access(path, os.X_OK), "Runtime directory is not traversable"
+        assert not os.access(path, os.W_OK), "Runtime user should not modify source"
+sys.path.insert(0, "/app")
+for name in ["app.main", "backend.app.main"]:
+    module = importlib.import_module(name)
+    module.app.state.store.close()
+assert not pathlib.Path("/app/backend/.env").exists()
+assert not pathlib.Path("/app/.env").exists()
+print(json.dumps({"user":"appuser","imports":"ok","runtime_access":"ok","source_writable":False}))
+'''
+        result = subprocess.run(
+            ["docker", "run", "--rm", "--network", "none", self.images["fixed"], "python", "-c", probe],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["user"], "appuser")
+        self.assertNotIn("PermissionError", result.stderr)
+
+    def test_fastapi_starts_as_default_nonroot_user(self):
+        name = "blueprint-permissions-server-" + uuid.uuid4().hex[:10]
+        try:
+            subprocess.run(
+                ["docker", "run", "-d", "--name", name, "-p", "127.0.0.1::8001", self.images["fixed"]],
+                check=True, capture_output=True, timeout=30,
+            )
+            address = subprocess.run(
+                ["docker", "port", name, "8001"], check=True, capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+            for attempt in range(40):
+                try:
+                    with urllib.request.urlopen("http://" + address + "/health/ready", timeout=2) as response:
+                        if response.status == 200:
+                            break
+                except (OSError, urllib.error.URLError):
+                    time.sleep(0.25)
+            else:
+                self.fail("Restricted-context FastAPI did not become ready")
+            with urllib.request.urlopen("http://" + address + "/", timeout=3) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn(b"<html", response.read().lower())
+            result = subprocess.run(
+                ["docker", "exec", name, "id", "-un"], check=True, capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(result.stdout.strip(), "appuser")
+            logs = subprocess.run(
+                ["docker", "logs", name], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            )
+            self.assertNotIn("PermissionError", logs.stdout + logs.stderr)
+        finally:
+            subprocess.run(["docker", "rm", "--force", name], capture_output=True, timeout=30)
 
 
 class CloudFormationLoader(yaml.SafeLoader):
@@ -114,9 +271,11 @@ class OriginIntegration(unittest.TestCase):
         cls.password = secrets.token_hex(32)
         cls.env = {**os.environ, "POSTGRES_USER": "validation", "POSTGRES_DB": "validation",
                    "POSTGRES_PASSWORD": cls.password, "BLUEPRINT_ORIGIN_TOKEN": cls.token}
+        image = restricted_images()["fixed"]
         override = Path(cls.directory.name) / "override.yaml"
         override.write_text(
             'services:\n'
+            f'  app:\n    image: {image}\n'
             '  caddy:\n'
             '    ports: !override ["127.0.0.1:0:80"]\n'
             '  postgres:\n'
@@ -125,7 +284,6 @@ class OriginIntegration(unittest.TestCase):
         cls.command = ["docker", "compose", "--project-name", cls.project,
                        "--env-file", os.devnull, "-f", str(ROOT / "docker-compose.aws.yaml"), "-f", str(override)]
         cls.addClassCleanup(lambda: cls.compose("down", "--volumes", "--remove-orphans"))
-        cls.compose("build", "app", timeout=1200)
         cls.compose("up", "-d", "--no-build", "--wait", "--wait-timeout", "150", timeout=180)
         cls.address = cls.compose("port", "caddy", "80").strip()
         cls.database_address = cls.compose("port", "postgres", "5432").strip()

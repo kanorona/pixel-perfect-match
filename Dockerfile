@@ -30,6 +30,9 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY backend/app ./app
 COPY --from=frontend-build /src/frontend/dist/client ./static
 
+# A Linux checkout under umask 077 must remain readable by the runtime user.
+RUN chmod -R a+rX /app/backend/app /app/backend/static
+
 RUN mkdir -p /data && useradd --create-home appuser && chown appuser:appuser /data
 USER appuser
 
