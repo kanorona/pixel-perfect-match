@@ -1,0 +1,159 @@
+name: CI and deployment
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A deployment must finish before the next main run can deploy.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-local-only
+          POSTGRES_DB: blueprint_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U ci -d blueprint_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --project backend --locked
+      - name: Deployment gate regression tests (no AWS calls)
+        run: python -m unittest discover -s ci/tests -v
+      - name: SQLite tests
+        run: uv run --project backend --locked pytest backend/tests -q
+      - name: PostgreSQL tests
+        env:
+          BLUEPRINT_TEST_POSTGRES_URL: postgresql://ci:ci-local-only@localhost:5432/blueprint_test
+        run: uv run --project backend --locked pytest backend/tests -q
+
+  frontend:
+    name: Frontend tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # Match the current Dockerfile; do not replace the operator's untracked lockfile.
+      - run: npm install --global npm@11.19.0
+      - run: npm install --no-package-lock
+      - run: npm test
+      - name: Build the production frontend
+        env:
+          BLUEPRINT_STATIC_BUILD: '1'
+          VITE_SUPABASE_URL: __BLUEPRINT_SAME_ORIGIN__
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_local_demo
+        run: npm run build
+
+  stack:
+    name: Compose integration and E2E
+    needs: [backend, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      COMPOSE_FILE: docker-compose.aws.yaml:docker-compose.ci.yaml
+      COMPOSE_PROJECT_NAME: blueprint-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      POSTGRES_USER: ci
+      POSTGRES_DB: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Generate disposable local credentials
+        run: |
+          for name in POSTGRES_PASSWORD BLUEPRINT_ORIGIN_TOKEN; do
+            value=$(openssl rand -hex 32)
+            echo "::add-mask::$value"
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          done
+      - name: Build app and browser images
+        run: docker compose --profile e2e build
+      - name: Start the production Compose configuration
+        run: docker compose up -d --no-build --wait --wait-timeout 180
+      - name: HTTP integration tests through Caddy
+        run: python ci/integration.py
+      - name: Assert non-root runtime and imports
+        run: |
+          docker compose exec -T app python -c 'import os,pwd,app.main; assert os.geteuid()!=0; assert pwd.getpwuid(os.geteuid()).pw_name=="appuser"; print("appuser import: OK")'
+      - name: Browser collaboration tests through the simulated CloudFront hop
+        run: docker compose --profile e2e run --rm -T e2e
+      - name: Service states on failure
+        if: failure()
+        run: docker compose ps --all
+      - name: Remove only this disposable stack and volume
+        if: always()
+        run: docker compose --profile e2e down --volumes --remove-orphans
+
+  deploy:
+    name: Deploy existing AWS instance
+    needs: [stack]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.BLUEPRINT_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-2
+      DEPLOY_INSTANCE_ID: ${{ vars.BLUEPRINT_INSTANCE_ID }}
+      DEPLOY_DOCUMENT: ${{ vars.BLUEPRINT_DEPLOY_DOCUMENT }}
+      PUBLIC_URL: ${{ vars.BLUEPRINT_PUBLIC_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check deployment settings
+        env:
+          ROLE_ARN: ${{ vars.BLUEPRINT_DEPLOY_ROLE_ARN }}
+        run: |
+          test -n "$ROLE_ARN"
+          test -n "$DEPLOY_INSTANCE_ID"
+          test -n "$DEPLOY_DOCUMENT"
+          test -n "$PUBLIC_URL"
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.BLUEPRINT_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-2
+          role-session-name: blueprint-${{ github.run_id }}
+          role-duration-seconds: 3600
+          allowed-account-ids: '397291427074'
+      - name: Deploy the tested commit and await SSM result
+        run: bash ci/deploy.sh
+      - name: Verify public readiness and the exact deployed revision
+        run: python ci/check_health.py "$PUBLIC_URL" "$GITHUB_SHA"
+
+  deployment-pending:
+    name: AWS OIDC setup pending
+    needs: [stack]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.BLUEPRINT_DEPLOY_ROLE_ARN == ''
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo 'CI passed. AWS deployment was skipped because the OIDC role has not been configured.' >> "$GITHUB_STEP_SUMMARY"

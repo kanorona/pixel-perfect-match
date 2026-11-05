@@ -1,5 +1,9 @@
 # AWS educational deployment
 
+For updates to the already running application through GitHub OIDC, see
+[continuous deployment](continuous-deployment.md). The approval boundaries below
+describe the original infrastructure bootstrap and change-set preparation.
+
 This is a single-instance demonstration in `us-east-2`, using `blueprint-dev`.
 CloudFront provides viewer HTTPS; Caddy proxies to FastAPI. PostgreSQL stays on
 the encrypted 20 GiB EC2 root disk in a Docker named volume. Deleting or replacing

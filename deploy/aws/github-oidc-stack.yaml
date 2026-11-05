@@ -1,0 +1,180 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  GitHub OIDC deployment for an existing educational EC2 instance;
+  one main branch and one fixed Systems Manager procedure, without infrastructure permissions.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref:
+      - at: docs/continuous-deployment.md
+        has: IAM scope, deployment behavior and independent cleanup
+Parameters:
+  InstanceId:
+    Type: AWS::EC2::Instance::Id
+    Description: Existing application instance; never provision one here.
+  Repository:
+    Type: String
+    Default: kanorona/pixel-perfect-match
+    AllowedPattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+  GitHubSubject:
+    Type: String
+    Description: Exact main branch subject, including immutable IDs when enabled.
+    AllowedPattern: '^repo:[A-Za-z0-9_.@/-]+:ref:refs/heads/main$'
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$'
+Conditions:
+  CreateProvider: !Equals [!Ref ExistingOidcProviderArn, '']
+Resources:
+  GitHubProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateProvider
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Temporary federation without long-lived AWS keys in GitHub.
+        must: [Reuse an existing shared provider instead of replacing it.]
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+  DeployDocument:
+    Type: AWS::SSM::Document
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Keep privileged commands fixed outside workflow parameters.
+        must:
+          - Accept only a full commit SHA, never arbitrary commands.
+          - Preserve the private environment file and PostgreSQL volume.
+          - Stop on failure without automatic rollback.
+    Properties:
+      Name: !Sub '${AWS::StackName}-Deploy'
+      DocumentType: Command
+      DocumentFormat: YAML
+      UpdateMethod: NewVersion
+      Content:
+        schemaVersion: '2.2'
+        description: Deploy the current published main commit on the existing Blueprint host.
+        parameters:
+          commit:
+            type: String
+            allowedPattern: '^[a-f0-9]{40}$'
+            interpolationType: ENV_VAR
+        mainSteps:
+          - name: deploy
+            action: aws:runShellScript
+            precondition:
+              StringEquals: [platformType, Linux]
+            inputs:
+              timeoutSeconds: '1500'
+              runCommand:
+                - !Sub |
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    # Requires an agent supporting ENV_VAR interpolation; fail closed otherwise.
+                    commit="$SSM_commit"
+                    [[ "$commit" =~ ^[a-f0-9]{40}$ ]]
+                    umask 077
+                    exec 9>/run/blueprint-deploy.lock
+                    flock -n 9 || { echo 'Another deployment is running' >&2; exit 1; }
+                    touch /var/log/blueprint-deploy.log
+                    chmod 0600 /var/log/blueprint-deploy.log
+                    # Keep build/application output private; GitHub reads only status.
+                    exec >>/var/log/blueprint-deploy.log 2>&1
+                    echo "Starting deployment $commit"
+                    cd /opt/blueprint
+                    test -f .env
+                    test "$(stat -c %a .env)" = 600
+                    test "$(git remote get-url origin)" = 'https://github.com/${Repository}.git'
+                    git diff --quiet
+                    git diff --cached --quiet
+                    timeout 120 git fetch --depth 1 origin refs/heads/main
+                    test "$(git rev-parse FETCH_HEAD)" = "$commit"
+                    git checkout --detach "$commit"
+                    docker compose -f docker-compose.aws.yaml config --quiet
+                    # Build before replacing the app. Do not restart PostgreSQL.
+                    timeout 900 docker compose -f docker-compose.aws.yaml build \
+                      --build-arg "BLUEPRINT_REVISION=$commit" app
+                    docker compose -f docker-compose.aws.yaml up -d --no-build --no-deps \
+                      --wait --wait-timeout 180 app
+                    docker compose -f docker-compose.aws.yaml up -d --no-build --no-deps \
+                      --force-recreate caddy
+                    EXPECTED_REVISION="$commit" python3 - <<'PY'
+                    import json, os, time, urllib.error, urllib.request
+                    from pathlib import Path
+                    values = dict(line.split('=', 1) for line in Path('.env').read_text().splitlines() if '=' in line)
+                    token = values['BLUEPRINT_ORIGIN_TOKEN']
+                    def request(path, supplied=None):
+                        req = urllib.request.Request('http://127.0.0.1' + path,
+                            headers={'X-Blueprint-Origin-Token': supplied} if supplied else {})
+                        try:
+                            with urllib.request.urlopen(req, timeout=5) as response:
+                                return response.status, response.read()
+                        except urllib.error.HTTPError as response:
+                            return response.code, response.read()
+                    for attempt in range(36):
+                        try:
+                            status, body = request('/health/ready', token)
+                            result = json.loads(body)
+                            if status == 200 and result.get('status') == 'ready' and result.get('revision') == os.environ['EXPECTED_REVISION']:
+                                assert request('/', token)[0] == 200
+                                assert request('/health/ready')[0] == 403
+                                assert request('/health/ready', 'invalid')[0] == 403
+                                print('Origin readiness, revision, frontend and protection: OK')
+                                break
+                        except (urllib.error.URLError, TimeoutError, ValueError):
+                            pass
+                        time.sleep(5)
+                    else:
+                        raise SystemExit('Readiness failed; deployment stopped')
+                    PY
+                    echo "Deployment verified: $commit"
+  DeployRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Short-lived OIDC access to one fixed deployment procedure.
+        must:
+          - Trust the exact main subject and STS audience.
+          - No arbitrary shell documents, infrastructure writes or IAM administration.
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-DeployRole'
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If [CreateProvider, !Ref GitHubProvider, !Ref ExistingOidcProviderArn]
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Ref GitHubSubject
+      Policies:
+        - PolicyName: DeployOneInstance
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: RunOnlyTheDeploymentProcedure
+                Effect: Allow
+                Action: ssm:SendCommand
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${DeployDocument}'
+                  - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}'
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref AWS::Region
+              # This API does not support resource-level IAM scope.
+              - Sid: ReadCommandStatus
+                Effect: Allow
+                Action: ssm:GetCommandInvocation
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref AWS::Region
+Outputs:
+  DeployRoleArn:
+    Value: !GetAtt DeployRole.Arn
+  DeployDocumentName:
+    Value: !Ref DeployDocument

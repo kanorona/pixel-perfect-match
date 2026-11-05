@@ -49,7 +49,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             app.state.store.check_ready()
         except SQLAlchemyError:
             return JSONResponse(status_code=503, content={"status": "unavailable"})
-        return JSONResponse(content={"status": "ready"})
+        return JSONResponse(content={"status": "ready", "revision": os.getenv("BLUEPRINT_REVISION", "unknown")})
 
     static_dir = Path(os.getenv("BLUEPRINT_STATIC_DIR", Path(__file__).resolve().parents[1] / "static"))
     shell = static_dir / "_shell.html"

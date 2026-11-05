@@ -1,0 +1,29 @@
+# Local CI only. The gateway simulates CloudFront injecting its origin header,
+# including WebSocket handshakes; production's Caddy matcher is unchanged.
+services:
+  caddy:
+    ports: !override ["127.0.0.1:18180:80"]
+  test-gateway:
+    image: caddy:2-alpine
+    environment:
+      BLUEPRINT_ORIGIN_TOKEN: ${BLUEPRINT_ORIGIN_TOKEN:?set the disposable CI token}
+    volumes:
+      - ./ci/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports: ["127.0.0.1:18181:80"]
+    networks:
+      default:
+        aliases: [blueprint.test]
+    depends_on:
+      caddy:
+        condition: service_started
+  e2e:
+    profiles: [e2e]
+    build:
+      context: ./e2e
+    environment:
+      CI: 'true'
+      E2E_BASE_URL: http://blueprint.test
+    ipc: host
+    depends_on:
+      test-gateway:
+        condition: service_started

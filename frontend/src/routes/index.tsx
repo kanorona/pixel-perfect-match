@@ -26,7 +26,7 @@ function Index() {
       </header>
       <main className="mx-auto max-w-6xl px-6 pb-24 pt-16">
         <div className="max-w-2xl">
-          <div className="font-mono text-xs uppercase tracking-[0.25em] text-primary">System design interviews</div>
+          <div className="font-mono text-xs uppercase tracking-[0.25em] text-primary">Practice system design together</div>
           <h1 className="mt-4 text-5xl font-semibold leading-[1.05] md:text-6xl">
             Whiteboard the architecture,<br /><span className="text-primary">together, live.</span>
           </h1>

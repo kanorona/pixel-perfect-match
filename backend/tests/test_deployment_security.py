@@ -48,7 +48,8 @@ def test_demo_flag_rejects_ambiguous_values(tmp_path, monkeypatch):
 
 
 def test_readiness_checks_database_and_hides_failure_details(client, monkeypatch):
-    assert client.get("/health/ready").json() == {"status": "ready"}
+    monkeypatch.setenv("BLUEPRINT_REVISION", "a" * 40)
+    assert client.get("/health/ready").json() == {"status": "ready", "revision": "a" * 40}
 
     def unavailable():
         raise OperationalError("SELECT 1", {}, Exception("private database details"))

@@ -1,0 +1,9 @@
+{
+  auto_https off
+  admin off
+}
+:80 {
+  reverse_proxy caddy:80 {
+    header_up X-Blueprint-Origin-Token {env.BLUEPRINT_ORIGIN_TOKEN}
+  }
+}

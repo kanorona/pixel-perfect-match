@@ -1,0 +1,2 @@
+# Bash scripts must also work when checked out by a Windows operator.
+*.sh text eol=lf

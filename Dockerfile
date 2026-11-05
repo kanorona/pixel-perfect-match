@@ -16,10 +16,12 @@ RUN BLUEPRINT_STATIC_BUILD=1 \
 
 FROM python:3.12-slim-bookworm
 
+ARG BLUEPRINT_REVISION=unknown
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     BLUEPRINT_ENV=production \
     BLUEPRINT_SEED_DEMO=false \
+    BLUEPRINT_REVISION=${BLUEPRINT_REVISION} \
     PATH="/app/backend/.venv/bin:$PATH" \
     BLUEPRINT_DATABASE_URL=sqlite:////data/blueprint.db
 

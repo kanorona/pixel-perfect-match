@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import { randomBytes } from "node:crypto";
 
-const INTERVIEWER_EMAIL = "demo@example.com";
-const INTERVIEWER_PASSWORD = "DemoPass123!";
+const INTERVIEWER_EMAIL = `e2e-${Date.now()}-${randomBytes(4).toString("hex")}@example.com`;
+const INTERVIEWER_PASSWORD = randomBytes(24).toString("hex");
 
 async function removeInterview(page: Page, sessionId: string) {
   if (!sessionId) return;
@@ -33,8 +34,32 @@ test("candidate canvas changes are synchronized with the interviewer", async ({ 
   const interviewer = await interviewerContext.newPage();
   const candidate = await candidateContext.newPage();
   let sessionId = "";
+  let receivedOperations = 0;
+  interviewer.on("websocket", (socket) => {
+    if (!new URL(socket.url()).pathname.includes("/realtime/v1/websocket")) return;
+    socket.on("framereceived", ({ payload }) => {
+      try {
+        const message = JSON.parse(payload.toString());
+        if (message[3] === "broadcast" && message[4]?.event === "op") receivedOperations++;
+      } catch { /* Ignore non-JSON control frames. */ }
+    });
+  });
 
   try {
+    await test.step("verify the updated landing page", async () => {
+      await interviewer.goto("/");
+      await expect(interviewer.getByText("Practice system design together", { exact: true })).toBeVisible();
+    });
+    await test.step("register an individual interviewer account", async () => {
+      await interviewer.goto("/auth");
+      await interviewer.getByRole("button", { name: "No account? Create one" }).click();
+      await interviewer.getByLabel("Email").fill(INTERVIEWER_EMAIL);
+      await interviewer.getByLabel("Password").fill(INTERVIEWER_PASSWORD);
+      await interviewer.getByRole("button", { name: "Create account", exact: true }).click();
+      await expect(interviewer).toHaveURL(/\/dashboard$/);
+      await interviewer.getByRole("button", { name: "Sign out", exact: true }).click();
+      await expect(interviewer).toHaveURL(/\/auth(?:\?|$)/);
+    });
     await test.step("log in as the interviewer", async () => {
       await interviewer.goto("/auth");
       await interviewer.getByLabel("Email").fill(INTERVIEWER_EMAIL);
@@ -79,6 +104,7 @@ test("candidate canvas changes are synchronized with the interviewer", async ({ 
 
     await test.step("verify that the interviewer receives the canvas change", async () => {
       await expect(interviewer.getByTestId("canvas-node").filter({ hasText: "Service" })).toHaveCount(1);
+      await expect.poll(() => receivedOperations).toBeGreaterThan(0);
     });
   } finally {
     await removeInterview(interviewer, sessionId);
