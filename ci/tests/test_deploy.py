@@ -40,6 +40,10 @@ class DeploymentCommands(unittest.TestCase):
         self.assertIn('imageDigest', calls)
         self.assertIn('sha256:' + '1' * 64, calls)
         self.assertIn('get-command-invocation', calls)
+        send_call = next(line for line in calls.splitlines() if 'send-command' in line)
+        comment = send_call.split('--comment ', 1)[1].split(' --timeout-seconds', 1)[0]
+        self.assertLessEqual(len(comment), 100)
+        self.assertEqual(comment, 'Blueprint deploy ' + 'a' * 12)
 
     def test_failure_is_reported_without_retrying_or_recovery(self):
         result, calls = self.run_deploy('Failed')

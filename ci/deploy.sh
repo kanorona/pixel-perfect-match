@@ -6,7 +6,7 @@ revision="${DEPLOY_REVISION:-${GITHUB_SHA:-}}"
 [[ "$DEPLOY_IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
 command_id=$(aws ssm send-command --region us-east-2 \
   --instance-ids "$DEPLOY_INSTANCE_ID" --document-name "$DEPLOY_DOCUMENT" \
-  --comment "Blueprint deploy ${revision} ${DEPLOY_IMAGE_DIGEST}" --timeout-seconds 900 \
+  --comment "Blueprint deploy ${revision:0:12}" --timeout-seconds 900 \
   --parameters "{\"commit\":[\"$revision\"],\"imageDigest\":[\"$DEPLOY_IMAGE_DIGEST\"]}" \
   --query Command.CommandId --output text)
 echo "SSM deployment command: $command_id"
