@@ -122,7 +122,7 @@ Resources:
                                 assert request('/health/ready', 'invalid')[0] == 403
                                 print('Origin readiness, revision, frontend and protection: OK')
                                 break
-                        except (urllib.error.URLError, TimeoutError, ValueError):
+                        except (urllib.error.URLError, ConnectionError, TimeoutError, ValueError):
                             pass
                         time.sleep(5)
                     else:
