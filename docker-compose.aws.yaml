@@ -20,6 +20,9 @@ services:
     restart: unless-stopped
 
   app:
+    # CI may build this service locally; AWS deployments always set an immutable
+    # ECR digest in BLUEPRINT_IMAGE and use --no-build.
+    image: ${BLUEPRINT_IMAGE:-blueprint-interviews-app:local}
     build:
       context: .
       args:

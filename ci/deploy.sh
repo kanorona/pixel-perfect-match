@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 revision="${DEPLOY_REVISION:-${GITHUB_SHA:-}}"
-: "${DEPLOY_INSTANCE_ID:?}" "${DEPLOY_DOCUMENT:?}" "${revision:?}"
+: "${DEPLOY_INSTANCE_ID:?}" "${DEPLOY_DOCUMENT:?}" "${DEPLOY_IMAGE_DIGEST:?}" "${revision:?}"
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+[[ "$DEPLOY_IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
 command_id=$(aws ssm send-command --region us-east-2 \
   --instance-ids "$DEPLOY_INSTANCE_ID" --document-name "$DEPLOY_DOCUMENT" \
-  --comment "Blueprint deploy ${revision}" --timeout-seconds 1800 \
-  --parameters "{\"commit\":[\"$revision\"]}" \
+  --comment "Blueprint deploy ${revision} ${DEPLOY_IMAGE_DIGEST}" --timeout-seconds 900 \
+  --parameters "{\"commit\":[\"$revision\"],\"imageDigest\":[\"$DEPLOY_IMAGE_DIGEST\"]}" \
   --query Command.CommandId --output text)
 echo "SSM deployment command: $command_id"
-# The built-in waiter times out before a cold image build can finish.
-for attempt in $(seq 1 180); do
+# Keep polling bounded; the host only pulls and starts a prebuilt image.
+for attempt in $(seq 1 90); do
   if result=$(aws ssm get-command-invocation --region us-east-2 \
     --command-id "$command_id" --instance-id "$DEPLOY_INSTANCE_ID" \
     --query '{Status:Status,Code:ResponseCode}' --output json 2>/dev/null); then

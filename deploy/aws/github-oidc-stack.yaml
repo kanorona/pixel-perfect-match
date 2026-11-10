@@ -30,6 +30,11 @@ Parameters:
     Type: String
     Default: ''
     AllowedPattern: '^$|^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$'
+  EcrRepositoryName:
+    Type: String
+    Default: blueprint-interviews-app
+    AllowedPattern: '^[a-z0-9]+(?:[._/-][a-z0-9]+)*$'
+    Description: Shared immutable application repository; URI is derived from this project and Region.
 Rules:
   EnvironmentSubjectIsolation:
     Assertions:
@@ -60,7 +65,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Keep privileged commands fixed outside workflow parameters.
         must:
-          - Accept only a full commit SHA, never arbitrary commands.
+          - Accept only a full commit SHA and sha256 image digest, never arbitrary commands.
           - Preserve the private environment file and PostgreSQL volume.
           - Stop on failure without automatic rollback.
     Properties:
@@ -70,11 +75,15 @@ Resources:
       UpdateMethod: NewVersion
       Content:
         schemaVersion: '2.2'
-        description: Deploy one verified published commit on the existing Blueprint host.
+        description: Pull and deploy one verified immutable image on the existing Blueprint host.
         parameters:
           commit:
             type: String
             allowedPattern: '^[a-f0-9]{40}$'
+            interpolationType: ENV_VAR
+          imageDigest:
+            type: String
+            allowedPattern: '^sha256:[a-f0-9]{64}$'
             interpolationType: ENV_VAR
         mainSteps:
           - name: deploy
@@ -89,7 +98,11 @@ Resources:
                     set -euo pipefail
                     # Requires an agent supporting ENV_VAR interpolation; fail closed otherwise.
                     commit="$SSM_commit"
+                    digest="$SSM_imageDigest"
                     [[ "$commit" =~ ^[a-f0-9]{40}$ ]]
+                    [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+                    image_uri='${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}/${EcrRepositoryName}'
+                    image_ref="$image_uri@$digest"
                     umask 077
                     exec 9>/run/blueprint-deploy.lock
                     flock -n 9 || { echo 'Another deployment is running' >&2; exit 1; }
@@ -111,10 +124,37 @@ Resources:
                     fi
                     test "$(git rev-parse FETCH_HEAD)" = "$commit"
                     git checkout --detach "$commit"
+                    registry="${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}"
+                    timeout 120 aws ecr get-login-password --region '${AWS::Region}' |
+                      docker login --username AWS --password-stdin "$registry" >/dev/null
+                    timeout 600 docker pull "$image_ref"
+                    docker image inspect "$image_ref" >/dev/null
+                    IMAGE_REF="$image_ref" REVISION="$commit" python3 - <<'PY'
+                    import os
+                    from pathlib import Path
+
+                    path = Path('.env')
+                    updates = {
+                        'BLUEPRINT_IMAGE': os.environ['IMAGE_REF'],
+                        'BLUEPRINT_REVISION': os.environ['REVISION'],
+                    }
+                    output = []
+                    seen = set()
+                    for line in path.read_text().splitlines():
+                        key = line.split('=', 1)[0] if '=' in line else ''
+                        if key in updates:
+                            output.append(f'{key}={updates[key]}')
+                            seen.add(key)
+                        else:
+                            output.append(line)
+                    output.extend(f'{key}={value}' for key, value in updates.items() if key not in seen)
+                    temporary = path.with_name('.env.next')
+                    temporary.write_text('\n'.join(output) + '\n')
+                    temporary.chmod(0o600)
+                    temporary.replace(path)
+                    PY
                     docker compose -f docker-compose.aws.yaml config --quiet
-                    # Build before replacing the app. Do not restart PostgreSQL.
-                    timeout 900 docker compose -f docker-compose.aws.yaml build \
-                      --build-arg "BLUEPRINT_REVISION=$commit" app
+                    # Replace only the app with the already-built digest. Do not restart PostgreSQL.
                     docker compose -f docker-compose.aws.yaml up -d --no-build --no-deps \
                       --wait --wait-timeout 180 app
                     docker compose -f docker-compose.aws.yaml up -d --no-build --no-deps \
@@ -148,7 +188,7 @@ Resources:
                     else:
                         raise SystemExit('Readiness failed; deployment stopped')
                     PY
-                    echo "Deployment verified: $commit"
+                    echo "Deployment verified: $commit $digest"
   DeployRole:
     Type: AWS::IAM::Role
     Metadata:

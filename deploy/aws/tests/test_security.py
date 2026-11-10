@@ -10,6 +10,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import socket
@@ -262,6 +263,34 @@ class EnvironmentIsolation(unittest.TestCase):
         policies = resources["InstanceRole"]["Properties"]["ManagedPolicyArns"]
         self.assertEqual(policies, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
         self.assertTrue(self.template["Parameters"]["OriginVerifyToken"]["NoEcho"])
+
+
+class EcrInfrastructure(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.text = (ROOT / "deploy/aws/ecr-stack.yaml").read_text(encoding="utf-8")
+        cls.template = yaml.load(cls.text, Loader=CloudFormationLoader)
+
+    def test_repository_is_immutable_encrypted_scanned_and_retained(self):
+        repository = self.template["Resources"]["ApplicationRepository"]
+        self.assertEqual(repository["DeletionPolicy"], "Retain")
+        self.assertEqual(repository["UpdateReplacePolicy"], "Retain")
+        self.assertEqual(repository["Properties"]["ImageTagMutability"], "IMMUTABLE")
+        self.assertTrue(repository["Properties"]["ImageScanningConfiguration"]["ScanOnPush"])
+        self.assertEqual(repository["Properties"]["EncryptionConfiguration"]["EncryptionType"], "AES256")
+        self.assertFalse(repository["Properties"]["EmptyOnDelete"])
+
+    def test_push_and_pull_policies_cannot_delete_images(self):
+        forbidden = {"ecr:BatchDeleteImage", "ecr:DeleteRepository", "ecr:SetRepositoryPolicy"}
+        for logical_id in ["BuildPushRole", "DevelopmentPullPolicy", "ProductionPullPolicy"]:
+            self.assertTrue(forbidden.isdisjoint(set(re.findall(r"ecr:[A-Za-z]+", str(
+                self.template["Resources"][logical_id]["Properties"]
+            )))))
+
+    def test_pull_access_targets_existing_distinct_roles(self):
+        self.assertIn("DevelopmentInstanceRoleName", self.template["Parameters"])
+        self.assertIn("ProductionInstanceRoleName", self.template["Parameters"])
+        self.assertIn("DistinctInstanceRoles", self.template["Rules"])
 
 
 class BootstrapSignals(unittest.TestCase):

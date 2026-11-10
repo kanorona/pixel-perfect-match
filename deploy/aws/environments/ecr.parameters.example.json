@@ -1,0 +1,7 @@
+[
+  { "ParameterKey": "RepositoryName", "ParameterValue": "blueprint-interviews-app" },
+  { "ParameterKey": "ExistingOidcProviderArn", "ParameterValue": "arn:aws:iam::397291427074:oidc-provider/token.actions.githubusercontent.com" },
+  { "ParameterKey": "GitHubSubject", "ParameterValue": "repo:kanorona@223929085/pixel-perfect-match@1413820328:ref:refs/heads/main" },
+  { "ParameterKey": "DevelopmentInstanceRoleName", "ParameterValue": "blueprint-interviews-InstanceRole-sJIZabQHWbPR" },
+  { "ParameterKey": "ProductionInstanceRoleName", "ParameterValue": "blueprint-interviews-production-InstanceRole-ti7zMNbX8qdi" }
+]

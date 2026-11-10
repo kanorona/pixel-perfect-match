@@ -1,0 +1,189 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Shared immutable application image repository for Blueprint Interviews — CI
+  pushes once and both existing environments pull the same digest.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: GitHub OIDC build -> private ECR -> existing Development and Production EC2 roles
+    must:
+      - Image tags are immutable; deployments and promotions use sha256 digests.
+      - Repository and images survive stack replacement or deletion.
+      - CI can push only to this repository; EC2 roles can only pull.
+    ref:
+      - at: docs/continuous-deployment.md
+        has: build, digest promotion, rollback and IAM scope
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: blueprint-interviews-app
+    AllowedPattern: '^[a-z0-9]+(?:[._/-][a-z0-9]+)*$'
+    Description: Shared private repository used by both environments.
+  ExistingOidcProviderArn:
+    Type: String
+    AllowedPattern: '^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$'
+    Description: Existing shared GitHub Actions OIDC provider.
+  GitHubSubject:
+    Type: String
+    AllowedPattern: '^repo:[A-Za-z0-9_.@/-]+:ref:refs/heads/main$'
+    Description: Exact immutable-ID subject for main builds.
+  DevelopmentInstanceRoleName:
+    Type: String
+    AllowedPattern: '^[A-Za-z0-9+=,.@_-]{1,64}$'
+    Description: Existing Development EC2 role; no role or instance is created here.
+  ProductionInstanceRoleName:
+    Type: String
+    AllowedPattern: '^[A-Za-z0-9+=,.@_-]{1,64}$'
+    Description: Existing Production EC2 role; no role or instance is created here.
+
+Rules:
+  ReviewedGitHubSubject:
+    Assertions:
+      - Assert: !Equals
+          - !Ref GitHubSubject
+          - repo:kanorona@223929085/pixel-perfect-match@1413820328:ref:refs/heads/main
+        AssertDescription: Only the reviewed repository main subject may publish images.
+  DistinctInstanceRoles:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref DevelopmentInstanceRoleName, !Ref ProductionInstanceRoleName]]
+        AssertDescription: Development and Production must use different EC2 roles.
+
+Resources:
+  ApplicationRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: One shared artifact boundary so Production reuses the exact Development image.
+        must:
+          - Keep tags immutable and deploy by digest.
+          - Retain repository and images; no automatic lifecycle deletion.
+        mutable: change-with-constraints
+        mutability:
+          RepositoryName: must-never-change
+          ImageTagMutability: must-never-change
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      EmptyOnDelete: false
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      Tags:
+        - Key: Name
+          Value: !Ref RepositoryName
+        - Key: Purpose
+          Value: blueprint-immutable-releases
+
+  BuildPushRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Short-lived main-only GitHub identity that publishes tested images.
+        must:
+          - Trust only the exact main OIDC subject and STS audience.
+          - Push only to ApplicationRepository; no delete or infrastructure actions.
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-PushRole'
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref ExistingOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Ref GitHubSubject
+      Policies:
+        - PolicyName: PushApplicationImages
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: GetRegistryLogin
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: PushOnlyThisRepository
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:CompleteLayerUpload
+                  - ecr:DescribeImages
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !GetAtt ApplicationRepository.Arn
+      Tags:
+        - Key: Environment
+          Value: build
+
+  DevelopmentPullPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets only the existing Development host pull immutable releases.
+        must: [Do not grant push, delete or repository administration.]
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-DevelopmentPull'
+      Roles: [!Ref DevelopmentInstanceRoleName]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: GetRegistryLogin
+            Effect: Allow
+            Action: ecr:GetAuthorizationToken
+            Resource: '*'
+          - Sid: PullOnlyThisRepository
+            Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Resource: !GetAtt ApplicationRepository.Arn
+
+  ProductionPullPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lets only the existing Production host pull approved immutable releases.
+        must: [Do not grant push, delete or repository administration.]
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-ProductionPull'
+      Roles: [!Ref ProductionInstanceRoleName]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: GetRegistryLogin
+            Effect: Allow
+            Action: ecr:GetAuthorizationToken
+            Resource: '*'
+          - Sid: PullOnlyThisRepository
+            Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Resource: !GetAtt ApplicationRepository.Arn
+
+Outputs:
+  RepositoryName:
+    Description: Private ECR repository name used by CI.
+    Value: !Ref ApplicationRepository
+  RepositoryArn:
+    Description: Repository ARN used for least-privilege policies.
+    Value: !GetAtt ApplicationRepository.Arn
+  RepositoryUri:
+    Description: Registry/repository URI; deployments append @sha256 digest.
+    Value: !GetAtt ApplicationRepository.RepositoryUri
+  BuildPushRoleArn:
+    Description: Main-only GitHub OIDC role that can publish images.
+    Value: !GetAtt BuildPushRole.Arn

@@ -112,9 +112,54 @@ jobs:
         if: always()
         run: docker compose --profile e2e down --volumes --remove-orphans
 
+  publish:
+    name: Build and publish immutable image
+    needs: [stack]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      vars.BLUEPRINT_ECR_PUSH_ROLE_ARN != '' && vars.BLUEPRINT_ECR_REPOSITORY_URI != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+      tag: ${{ steps.publish.outputs.tag }}
+    env:
+      AWS_REGION: us-east-2
+      ECR_REPOSITORY_URI: ${{ vars.BLUEPRINT_ECR_REPOSITORY_URI }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check registry settings
+        env:
+          ROLE_ARN: ${{ vars.BLUEPRINT_ECR_PUSH_ROLE_ARN }}
+        run: |
+          test -n "$ROLE_ARN"
+          test -n "$ECR_REPOSITORY_URI"
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.BLUEPRINT_ECR_PUSH_ROLE_ARN }}
+          aws-region: us-east-2
+          role-session-name: image-${{ github.run_id }}
+          role-duration-seconds: 3600
+          allowed-account-ids: '397291427074'
+      - name: Build once, push and resolve digest
+        id: publish
+        run: bash ci/build_and_push.sh
+      - name: Preserve the immutable Development release manifest
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: deployment-manifest
+          path: deployment-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
   deploy:
     name: Deploy existing AWS instance
-    needs: [stack]
+    needs: [publish]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.BLUEPRINT_DEPLOY_ROLE_ARN != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -126,6 +171,7 @@ jobs:
       DEPLOY_INSTANCE_ID: ${{ vars.BLUEPRINT_INSTANCE_ID }}
       DEPLOY_DOCUMENT: ${{ vars.BLUEPRINT_DEPLOY_DOCUMENT }}
       PUBLIC_URL: ${{ vars.BLUEPRINT_PUBLIC_URL }}
+      DEPLOY_IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -138,6 +184,7 @@ jobs:
           test -n "$DEPLOY_INSTANCE_ID"
           test -n "$DEPLOY_DOCUMENT"
           test -n "$PUBLIC_URL"
+          test -n "$DEPLOY_IMAGE_DIGEST"
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.BLUEPRINT_DEPLOY_ROLE_ARN }}
@@ -153,7 +200,10 @@ jobs:
   deployment-pending:
     name: AWS OIDC setup pending
     needs: [stack]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.BLUEPRINT_DEPLOY_ROLE_ARN == ''
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      (vars.BLUEPRINT_DEPLOY_ROLE_ARN == '' || vars.BLUEPRINT_ECR_PUSH_ROLE_ARN == '' ||
+      vars.BLUEPRINT_ECR_REPOSITORY_URI == '')
     runs-on: ubuntu-24.04
     steps:
-      - run: echo 'CI passed. AWS deployment was skipped because the OIDC role has not been configured.' >> "$GITHUB_STEP_SUMMARY"
+      - run: echo 'CI passed. AWS deployment was skipped because OIDC or ECR variables are incomplete.' >> "$GITHUB_STEP_SUMMARY"
