@@ -1,15 +1,27 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >-
-  Blueprint Interviews on one EC2 instance. CloudFront terminates HTTPS;
-  Caddy proxies to FastAPI; PostgreSQL runs on the private Docker network.
-  One app process is intentional because realtime rooms are held in memory.
+  Reusable Blueprint Interviews environment on one EC2 instance. Separate
+  CloudFormation stacks isolate development and production while preserving
+  the CloudFront, Caddy, FastAPI and PostgreSQL architecture.
 
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: CloudFront -> EC2/Caddy -> FastAPI -> PostgreSQL on a stack-local Docker volume
+    must:
+      - Deploy development and production as different stacks with different origin tokens.
+      - Never copy or reference a PostgreSQL volume or generated database password across environments.
+      - Keep EC2 reachable on port 80 only through the CloudFront origin-facing prefix list.
+    ref:
+      - at: docs/environments.md
+        has: environment parameters, isolation model, costs and future deployment procedure
   AWS::CloudFormation::Interface:
     ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters: [EnvironmentName]
       - Label:
           default: Source
         Parameters: [RepoUrl, RepoRef]
@@ -18,9 +30,15 @@ Metadata:
         Parameters: [InstanceType, RootVolumeSize, LatestAmiId, BuildxVersion]
       - Label:
           default: Network
-        Parameters: [CloudFrontPrefixListId, OriginVerifyToken]
+        Parameters: [VpcCidr, PublicSubnetCidr, CloudFrontPrefixListId, OriginVerifyToken]
 
 Parameters:
+  EnvironmentName:
+    Type: String
+    Default: development
+    AllowedValues: [development, production]
+    Description: Logical environment. Use a separate stack and private parameters file for each value.
+
   RepoUrl:
     Type: String
     Default: https://github.com/kanorona/pixel-perfect-match.git
@@ -56,6 +74,18 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
     Description: Latest Amazon Linux 2023 x86_64 AMI from the public SSM parameter.
 
+  VpcCidr:
+    Type: String
+    Default: 10.42.0.0/16
+    AllowedPattern: ^(?:10(?:\.[0-9]{1,3}){3}|172\.(?:1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}|192\.168(?:\.[0-9]{1,3}){2})/(?:1[6-9]|2[0-8])$
+    Description: Private VPC CIDR. Production uses a different range from development.
+
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.42.0.0/24
+    AllowedPattern: ^(?:10(?:\.[0-9]{1,3}){3}|172\.(?:1[6-9]|2[0-9]|3[01])(?:\.[0-9]{1,3}){2}|192\.168(?:\.[0-9]{1,3}){2})/(?:2[0-8])$
+    Description: Public subnet CIDR contained within VpcCidr.
+
   CloudFrontPrefixListId:
     Type: String
     Description: >-
@@ -74,6 +104,20 @@ Parameters:
       Privileged readers of EC2 UserData or CloudFront origin configuration can
       retrieve it; NoEcho only masks parameter displays.
 
+Rules:
+  EnvironmentNetworkIsolation:
+    Assertions:
+      - Assert: !Or
+          - !And
+            - !Equals [!Ref EnvironmentName, development]
+            - !Equals [!Ref VpcCidr, 10.42.0.0/16]
+            - !Equals [!Ref PublicSubnetCidr, 10.42.0.0/24]
+          - !And
+            - !Equals [!Ref EnvironmentName, production]
+            - !Equals [!Ref VpcCidr, 10.43.0.0/16]
+            - !Equals [!Ref PublicSubnetCidr, 10.43.0.0/24]
+        AssertDescription: EnvironmentName must use its reviewed, non-overlapping VPC and subnet CIDRs.
+
 Conditions:
   IsUsEast1: !Equals [!Ref "AWS::Region", us-east-1]
 
@@ -81,12 +125,14 @@ Resources:
   Vpc:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.42.0.0/16
+      CidrBlock: !Ref VpcCidr
       EnableDnsSupport: true
       EnableDnsHostnames: true
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-vpc
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -94,6 +140,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-igw
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   VpcGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -105,12 +153,14 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref Vpc
-      CidrBlock: 10.42.0.0/24
+      CidrBlock: !Ref PublicSubnetCidr
       AvailabilityZone: !Select [0, !GetAZs ""]
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-public
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -119,6 +169,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-public
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   DefaultRoute:
     Type: AWS::EC2::Route
@@ -148,6 +200,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-sg
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   InstanceRole:
     Type: AWS::IAM::Role
@@ -165,6 +219,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-role
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -178,6 +234,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-eip
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   Instance:
     Type: AWS::EC2::Instance
@@ -217,6 +275,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
+        - Key: Environment
+          Value: !Ref EnvironmentName
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
@@ -300,8 +360,10 @@ Resources:
           umask 077
           {
             echo "POSTGRES_USER=blueprint"
-            echo "POSTGRES_DB=blueprint"
+            echo "POSTGRES_DB=blueprint_${EnvironmentName}"
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)"
+            echo "BLUEPRINT_ENV=${EnvironmentName}"
+            echo "BLUEPRINT_REVISION=${RepoRef}"
             printf '%s\n' 'BLUEPRINT_ORIGIN_TOKEN=${OriginVerifyToken}'
           } > .env
           chmod 0600 .env
@@ -395,8 +457,14 @@ Resources:
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
 Outputs:
+  EnvironmentName:
+    Description: Logical environment represented by this independent stack.
+    Value: !Ref EnvironmentName
+
   ApplicationUrl:
     Description: HTTPS URL served by CloudFront. Allow several minutes after creation.
     Value: !Sub https://${CloudFrontDistribution.DomainName}

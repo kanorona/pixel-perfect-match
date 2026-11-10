@@ -1,0 +1,10 @@
+[
+  { "ParameterKey": "EnvironmentName", "ParameterValue": "development" },
+  { "ParameterKey": "RepoRef", "ParameterValue": "REPLACE_WITH_PUBLISHED_40_CHARACTER_COMMIT_SHA" },
+  { "ParameterKey": "InstanceType", "ParameterValue": "t3.small" },
+  { "ParameterKey": "RootVolumeSize", "ParameterValue": "20" },
+  { "ParameterKey": "VpcCidr", "ParameterValue": "10.42.0.0/16" },
+  { "ParameterKey": "PublicSubnetCidr", "ParameterValue": "10.42.0.0/24" },
+  { "ParameterKey": "CloudFrontPrefixListId", "ParameterValue": "REPLACE_WITH_SELECTED_REGION_PREFIX_LIST_ID" },
+  { "ParameterKey": "OriginVerifyToken", "ParameterValue": "REPLACE_WITH_UNIQUE_PRIVATE_64_HEX_TOKEN" }
+]

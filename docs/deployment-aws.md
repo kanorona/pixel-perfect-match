@@ -4,11 +4,14 @@ For updates to the already running application through GitHub OIDC, see
 [continuous deployment](continuous-deployment.md). The approval boundaries below
 describe the original infrastructure bootstrap and change-set preparation.
 
-This is a single-instance demonstration in `us-east-2`, using `blueprint-dev`.
+This is a single-instance-per-environment demonstration in `us-east-2`, using `blueprint-dev`.
 CloudFront provides viewer HTTPS; Caddy proxies to FastAPI. PostgreSQL stays on
 the encrypted 20 GiB EC2 root disk in a Docker named volume. Deleting or replacing
 the instance deletes its data; this is intentional. Keep one backend process:
 realtime room coordination currently lives in memory.
+
+Development and production now share one parameterized template but use separate
+stacks and resources. See [environment isolation and production preparation](environments.md).
 
 ## Approval boundary
 
@@ -178,7 +181,7 @@ After review and separate authorization:
 5. Once authorized to prepare a proposal ONLY:
 
    ```powershell
-   .\deploy\aws\deploy.ps1 -Profile blueprint-dev -Region us-east-2 -ParametersFile $parametersFile
+   .\deploy\aws\deploy.ps1 -Environment development -Profile blueprint-dev -Region us-east-2 -ParametersFile $parametersFile
    ```
 
    The script never executes it. Review `describe-change-set` and `describe-events`

@@ -1,4 +1,4 @@
-# Production stack for the single EC2 instance created by CloudFormation.
+# AWS environment stack for the single EC2 instance created by CloudFormation.
 # Only Caddy is reachable from the host. PostgreSQL and FastAPI remain on the
 # private Compose network. Keep exactly one app replica: realtime rooms live in
 # the FastAPI process memory.
@@ -22,9 +22,11 @@ services:
   app:
     build:
       context: .
+      args:
+        BLUEPRINT_REVISION: ${BLUEPRINT_REVISION:-unknown}
     environment:
       BLUEPRINT_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      BLUEPRINT_ENV: production
+      BLUEPRINT_ENV: ${BLUEPRINT_ENV:-production}
       BLUEPRINT_SEED_DEMO: "false"
     expose:
       - "8001"

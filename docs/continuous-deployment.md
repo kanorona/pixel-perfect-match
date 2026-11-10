@@ -1,5 +1,10 @@
 # Continuous deployment for the educational instance
 
+The automatic workflow remains the Development path. Production is promoted
+only through `.github/workflows/promote-production.yml`, which must be started
+with `workflow_dispatch`. See [development and production environments](environments.md)
+for the isolation model.
+
 `.github/workflows/ci.yml` runs backend and frontend jobs in parallel. Backend
 tests cover SQLite and PostgreSQL. After both pass, the stack job builds images
 and starts the production Compose file with `docker-compose.ci.yaml`. HTTP tests
@@ -21,11 +26,11 @@ the application stack, network or database. Use profile `blueprint-dev` in
 `us-east-2`. Confirm the selected region in AWS Settings > View all projects >
 Overview > Additional Info > Region; check credits/spend in AWS Settings > Billing.
 
-The role trusts only the STS audience and this repository's main OIDC subject.
+The Development role trusts only the STS audience and this repository's main OIDC subject.
 Query `/repos/kanorona/pixel-perfect-match/actions/oidc/customization/sub` before
 provisioning; immutable owner/repository IDs may be enabled. The current subject
 is `repo:kanorona@223929085/pixel-perfect-match@1413820328:ref:refs/heads/main`.
-No workflow environment is used because it changes the subject. PRs and manual
+No workflow environment is used for Development because it changes the subject. PRs and manual
 dispatches run CI but cannot trigger the deployment job. Main pushes also skip
 deployment until BLUEPRINT_DEPLOY_ROLE_ARN exists; a separate job explicitly
 reports that AWS setup is pending, so CI success is not deployment success.
@@ -43,6 +48,13 @@ read secrets or run arbitrary shell documents. The only input is a 40-character
 SHA, checked against current published main and the host's repository URL.
 Writers to main remain trusted to deploy code and Dockerfiles. Protect main when
 sharing this project.
+
+Production uses a second deployment support stack and reuses the same OIDC
+provider. Its role trusts only
+`repo:kanorona@223929085/pixel-perfect-match@1413820328:environment:production`
+and can send only its stack-owned SSM document to instance
+`i-088ca3bcb29814cef`. The `production` GitHub Environment is therefore part of
+the security boundary and should require a reviewer.
 
 ## Provisioning and settings
 
@@ -67,6 +79,27 @@ Set these GitHub Actions repository variables after support-stack creation:
 
 These are not credentials. Do not copy AWS keys, the origin token or the database
 password to GitHub. The root-owned EC2 `.env` stays private, mode 0600.
+
+For Production, create `blueprint-interviews-ci-production` from the same
+template using `deploy/aws/environments/production-ci.parameters.example.json`.
+Set the same four variable names in the GitHub Environment named `production`,
+using the Production support-stack outputs and application-stack outputs. The
+environment values override the Development repository variables only inside
+the protected Production job.
+
+## Manual Development to Production promotion
+
+1. Confirm Development is healthy and its CI run completed successfully.
+2. In GitHub, open **Actions > Promote development to production > Run workflow**.
+3. The selection job reads the SHA currently reported by Development; there is
+   no SHA input and the workflow never substitutes the latest `main` revision.
+4. It requires a successful `push` run of `ci.yml` for that exact SHA.
+5. Approve the protected `production` environment. The Production-only OIDC
+   role then runs its fixed SSM document, preserving `.env` and PostgreSQL.
+6. The job succeeds only after public HTTPS readiness reports the exact SHA.
+
+The workflow and host lock both serialize Production deployments. A concurrent
+manual run waits, and a second command reaching the host fails closed.
 
 ## Deploy, validate and diagnose
 
@@ -102,18 +135,9 @@ the deployment variables before deleting the application. Deleting only the
 application does not remove the support role/document. A reused shared OIDC
 provider must not be deleted. The workflow never deletes infrastructure.
 
-## Current AWS prerequisite
+## Current AWS state
 
-On November 4, 2026 (America/Guayaquil), the project reported FREE/ACTIVE. The
-operator's administrator session was explicitly denied both
-`iam:ListOpenIDConnectProviders` and `iam:GetOpenIDConnectProvider` by the
-organization SCP `p-uzlwi2y7`, statement `DenyIAMActions`. IAM Access Troubleshooter
-confirmed that the organizational deny overrides AdministratorAccess. No support
-resources were provisioned while this prerequisite was blocked.
-
-An administrator must resolve OIDC access before provisioning this template.
-The new AWS experience documents advanced feature activation as the route to
-manage organization restrictions. It requires an upgraded plan, cannot be
-reversed, and removes managed spend limits. Do not activate it or change billing
-as part of an automatic retry. Review the consequences with the project owner:
-https://docs.aws.amazon.com/accounts/latest/reference/activate-advanced-features.html
+The Development support stack `blueprint-interviews-ci` and the shared GitHub
+OIDC provider are active. Production promotion remains blocked until the
+Production support stack and protected GitHub Environment variables described
+above are configured. No production promotion is performed by these instructions.

@@ -1,0 +1,104 @@
+name: Promote development to production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# GitHub prevents concurrent runs; the SSM document also holds a host-level flock.
+concurrency:
+  group: blueprint-production-promotion
+  cancel-in-progress: false
+
+jobs:
+  select-revision:
+    name: Select verified Development revision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      revision: ${{ steps.development.outputs.revision }}
+    env:
+      DEVELOPMENT_URL: ${{ vars.BLUEPRINT_PUBLIC_URL }}
+    steps:
+      - name: Read the revision currently serving Development
+        id: development
+        run: |
+          test -n "$DEVELOPMENT_URL"
+          case "$DEVELOPMENT_URL" in https://*) ;; *) exit 1 ;; esac
+          payload=$(curl --fail --silent --show-error --max-time 20 \
+            "${DEVELOPMENT_URL%/}/health/ready")
+          revision=$(printf '%s' "$payload" | python -c \
+            'import json,re,sys; value=json.load(sys.stdin); revision=value.get("revision", ""); assert value.get("status")=="ready" and re.fullmatch(r"[a-f0-9]{40}", revision); print(revision)')
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+          printf 'Development revision selected: `%s`\n' "$revision" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require a successful CI run for that exact revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ steps.development.outputs.revision }}
+        run: |
+          runs=$(gh api --method GET \
+            -f head_sha="$REVISION" -f status=success -f event=push -f per_page=10 \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs")
+          RUNS="$runs" python - <<'PY'
+          import json, os
+          revision = os.environ['REVISION']
+          runs = json.loads(os.environ['RUNS']).get('workflow_runs', [])
+          matches = [run for run in runs if run.get('head_sha') == revision
+                     and run.get('event') == 'push' and run.get('conclusion') == 'success']
+          if not matches:
+              raise SystemExit(f'No successful push CI run found for {revision}')
+          print(f'Verified successful CI run {matches[0]["html_url"]}')
+          PY
+
+  promote:
+    name: Promote verified revision to Production
+    needs: select-revision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-2
+      DEPLOY_REVISION: ${{ needs.select-revision.outputs.revision }}
+      DEPLOY_INSTANCE_ID: ${{ vars.BLUEPRINT_INSTANCE_ID }}
+      DEPLOY_DOCUMENT: ${{ vars.BLUEPRINT_DEPLOY_DOCUMENT }}
+      PUBLIC_URL: ${{ vars.BLUEPRINT_PUBLIC_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check Production deployment settings
+        env:
+          ROLE_ARN: ${{ vars.BLUEPRINT_DEPLOY_ROLE_ARN }}
+        run: |
+          test -n "$ROLE_ARN"
+          test -n "$DEPLOY_INSTANCE_ID"
+          test -n "$DEPLOY_DOCUMENT"
+          test -n "$PUBLIC_URL"
+          case "$PUBLIC_URL" in https://*) ;; *) exit 1 ;; esac
+          test "$DEPLOY_INSTANCE_ID" = "i-088ca3bcb29814cef"
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.BLUEPRINT_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-2
+          role-session-name: production-${{ github.run_id }}
+          role-duration-seconds: 3600
+          allowed-account-ids: '397291427074'
+
+      - name: Deploy the verified Development revision
+        run: bash ci/deploy.sh
+
+      - name: Verify Production HTTPS, readiness and exact revision
+        run: python ci/check_health.py "$PUBLIC_URL" "$DEPLOY_REVISION"
+
+      - name: Record promoted revision
+        run: printf 'Promoted Development revision `%s` to Production.\n' "$DEPLOY_REVISION" >> "$GITHUB_STEP_SUMMARY"

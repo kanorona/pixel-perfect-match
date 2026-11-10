@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$StackName = "blueprint-interviews",
+    [ValidateSet("development", "production")]
+    [string]$Environment = "development",
+    [string]$StackName,
     [ValidateSet("us-east-2")]
     [string]$Region = "us-east-2",
     [string]$Profile = "blueprint-dev",
@@ -10,6 +12,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 $template = Join-Path $PSScriptRoot "blueprint-stack.yaml"
+$stackNames = @{
+    development = "blueprint-interviews"
+    production  = "blueprint-interviews-production"
+}
+$networkCidrs = @{
+    development = @{ Vpc = "10.42.0.0/16"; Subnet = "10.42.0.0/24" }
+    production  = @{ Vpc = "10.43.0.0/16"; Subnet = "10.43.0.0/24" }
+}
+$expectedStackName = $stackNames[$Environment]
+if ([string]::IsNullOrWhiteSpace($StackName)) {
+    $StackName = $expectedStackName
+}
+elseif ($StackName -cne $expectedStackName) {
+    throw "Environment '$Environment' must use stack '$expectedStackName'; refusing '$StackName'."
+}
 
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
     throw "AWS CLI is not installed or is not available in PATH. Install AWS CLI v2 and authenticate before running this script."
@@ -28,11 +45,24 @@ if (($keys | Select-Object -Unique).Count -ne $keys.Count) {
 }
 $originToken = @($parameters | Where-Object ParameterKey -eq "OriginVerifyToken")
 $sourceRef = @($parameters | Where-Object ParameterKey -eq "RepoRef")
+$environmentName = @($parameters | Where-Object ParameterKey -eq "EnvironmentName")
+$vpcCidr = @($parameters | Where-Object ParameterKey -eq "VpcCidr")
+$publicSubnetCidr = @($parameters | Where-Object ParameterKey -eq "PublicSubnetCidr")
 if ($originToken.Count -ne 1 -or $originToken[0].ParameterValue -cnotmatch '^[a-f0-9]{64}$') {
     throw "The private file must contain one OriginVerifyToken with 64 lowercase hexadecimal characters."
 }
 if ($sourceRef.Count -ne 1 -or $sourceRef[0].ParameterValue -cnotmatch '^[a-f0-9]{40}$') {
     throw "RepoRef must be the full SHA of an already published commit."
+}
+if ($environmentName.Count -ne 1 -or $environmentName[0].ParameterValue -cne $Environment) {
+    throw "The parameters file must contain one EnvironmentName equal to '$Environment'."
+}
+$expectedNetwork = $networkCidrs[$Environment]
+if ($vpcCidr.Count -ne 1 -or $vpcCidr[0].ParameterValue -cne $expectedNetwork.Vpc) {
+    throw "Environment '$Environment' must use VpcCidr '$($expectedNetwork.Vpc)'."
+}
+if ($publicSubnetCidr.Count -ne 1 -or $publicSubnetCidr[0].ParameterValue -cne $expectedNetwork.Subnet) {
+    throw "Environment '$Environment' must use PublicSubnetCidr '$($expectedNetwork.Subnet)'."
 }
 
 aws @awsContext sts get-caller-identity | Out-Null
@@ -59,7 +89,7 @@ if ($providedPrefixList.Count -ne 1 -or $providedPrefixList[0].ParameterValue -n
 }
 
 $changeSetName = "review-" + $sourceRef[0].ParameterValue.Substring(0, 7) + "-" + [guid]::NewGuid().ToString("N")
-Write-Host "Preparing change set '$changeSetName' for '$StackName' in $Region. Execution is separate."
+Write-Host "Preparing $Environment CREATE change set '$changeSetName' for '$StackName' in $Region. Execution is separate."
 # Deliberately preview only. This script never executes a change set.
 aws @awsContext cloudformation create-change-set `
     --stack-name $StackName `

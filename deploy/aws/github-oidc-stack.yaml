@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  GitHub OIDC deployment for an existing educational EC2 instance;
-  one main branch and one fixed Systems Manager procedure, without infrastructure permissions.
+  Environment-scoped GitHub OIDC deployment for one existing educational EC2
+  instance and one fixed Systems Manager procedure, without infrastructure permissions.
 Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
@@ -10,6 +10,11 @@ Metadata:
       - at: docs/continuous-deployment.md
         has: IAM scope, deployment behavior and independent cleanup
 Parameters:
+  DeploymentEnvironment:
+    Type: String
+    Default: development
+    AllowedValues: [development, production]
+    Description: Environment owned by this role, document and target instance.
   InstanceId:
     Type: AWS::EC2::Instance::Id
     Description: Existing application instance; never provision one here.
@@ -19,12 +24,23 @@ Parameters:
     AllowedPattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
   GitHubSubject:
     Type: String
-    Description: Exact main branch subject, including immutable IDs when enabled.
-    AllowedPattern: '^repo:[A-Za-z0-9_.@/-]+:ref:refs/heads/main$'
+    Description: Exact main-branch or protected-production-environment subject, including immutable IDs.
+    AllowedPattern: '^repo:[A-Za-z0-9_.@/-]+:(?:ref:refs/heads/main|environment:production)$'
   ExistingOidcProviderArn:
     Type: String
     Default: ''
     AllowedPattern: '^$|^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$'
+Rules:
+  EnvironmentSubjectIsolation:
+    Assertions:
+      - Assert: !Or
+          - !And
+            - !Equals [!Ref DeploymentEnvironment, development]
+            - !Equals [!Ref GitHubSubject, 'repo:kanorona@223929085/pixel-perfect-match@1413820328:ref:refs/heads/main']
+          - !And
+            - !Equals [!Ref DeploymentEnvironment, production]
+            - !Equals [!Ref GitHubSubject, 'repo:kanorona@223929085/pixel-perfect-match@1413820328:environment:production']
+        AssertDescription: The role must trust only its reviewed Development branch or Production environment subject.
 Conditions:
   CreateProvider: !Equals [!Ref ExistingOidcProviderArn, '']
 Resources:
@@ -54,7 +70,7 @@ Resources:
       UpdateMethod: NewVersion
       Content:
         schemaVersion: '2.2'
-        description: Deploy the current published main commit on the existing Blueprint host.
+        description: Deploy one verified published commit on the existing Blueprint host.
         parameters:
           commit:
             type: String
@@ -88,7 +104,11 @@ Resources:
                     test "$(git remote get-url origin)" = 'https://github.com/${Repository}.git'
                     git diff --quiet
                     git diff --cached --quiet
-                    timeout 120 git fetch --depth 1 origin refs/heads/main
+                    if [ '${DeploymentEnvironment}' = development ]; then
+                      timeout 120 git fetch --depth 1 origin refs/heads/main
+                    else
+                      timeout 120 git fetch --depth 1 origin "$commit"
+                    fi
                     test "$(git rev-parse FETCH_HEAD)" = "$commit"
                     git checkout --detach "$commit"
                     docker compose -f docker-compose.aws.yaml config --quiet
@@ -135,7 +155,7 @@ Resources:
       com.aws.cloudformation.Context:
         why: Short-lived OIDC access to one fixed deployment procedure.
         must:
-          - Trust the exact main subject and STS audience.
+          - Trust the exact environment-specific subject and STS audience.
           - No arbitrary shell documents, infrastructure writes or IAM administration.
     Properties:
       RoleName: !Sub '${AWS::StackName}-DeployRole'
@@ -173,8 +193,13 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:RequestedRegion: !Ref AWS::Region
+      Tags:
+        - Key: Environment
+          Value: !Ref DeploymentEnvironment
 Outputs:
   DeployRoleArn:
     Value: !GetAtt DeployRole.Arn
   DeployDocumentName:
     Value: !Ref DeployDocument
+  DeploymentEnvironment:
+    Value: !Ref DeploymentEnvironment

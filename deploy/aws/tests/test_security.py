@@ -6,6 +6,7 @@ Set BLUEPRINT_RUN_DOCKER_TESTS=1 to build an isolated, disposable Compose stack.
 
 import base64
 import io
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -193,6 +194,74 @@ def intrinsic(loader, tag, node):
 
 
 CloudFormationLoader.add_multi_constructor("!", intrinsic)
+
+
+class EnvironmentIsolation(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.template_path = ROOT / "deploy/aws/blueprint-stack.yaml"
+        cls.template_text = cls.template_path.read_text(encoding="utf-8")
+        cls.template = yaml.load(cls.template_text, Loader=CloudFormationLoader)
+        cls.environments = {}
+        for name in ["development", "production"]:
+            path = ROOT / f"deploy/aws/environments/{name}.parameters.example.json"
+            values = json.loads(path.read_text(encoding="utf-8"))
+            cls.environments[name] = {item["ParameterKey"]: item["ParameterValue"] for item in values}
+
+    def test_environment_parameter_is_constrained(self):
+        parameter = self.template["Parameters"]["EnvironmentName"]
+        self.assertEqual(parameter["Default"], "development")
+        self.assertEqual(parameter["AllowedValues"], ["development", "production"])
+        self.assertIn("EnvironmentNetworkIsolation", self.template["Rules"])
+
+    def test_examples_use_distinct_networks_and_invalid_secret_placeholders(self):
+        development = self.environments["development"]
+        production = self.environments["production"]
+        self.assertEqual(development["EnvironmentName"], "development")
+        self.assertEqual(production["EnvironmentName"], "production")
+        self.assertNotEqual(development["VpcCidr"], production["VpcCidr"])
+        self.assertNotEqual(development["PublicSubnetCidr"], production["PublicSubnetCidr"])
+        networks = []
+        for values in [development, production]:
+            vpc = ipaddress.ip_network(values["VpcCidr"])
+            subnet = ipaddress.ip_network(values["PublicSubnetCidr"])
+            self.assertTrue(vpc.is_private)
+            self.assertTrue(subnet.subnet_of(vpc))
+            networks.append(vpc)
+            self.assertTrue(values["OriginVerifyToken"].startswith("REPLACE_"))
+            self.assertNotRegex(values["OriginVerifyToken"], r"^[a-f0-9]{64}$")
+            self.assertNotRegex(values["RepoRef"], r"^[a-f0-9]{40}$")
+        self.assertFalse(networks[0].overlaps(networks[1]))
+
+    def test_database_is_generated_inside_each_stack(self):
+        script = self.template["Resources"]["Instance"]["Properties"]["UserData"]["Fn::Base64"]["Fn::Sub"]
+        self.assertIn('POSTGRES_DB=blueprint_${EnvironmentName}', script)
+        self.assertIn('POSTGRES_PASSWORD=$(openssl rand -hex 32)', script)
+        self.assertIn('BLUEPRINT_ENV=${EnvironmentName}', script)
+        self.assertIn('BLUEPRINT_REVISION=${RepoRef}', script)
+        compose = (ROOT / "docker-compose.aws.yaml").read_text(encoding="utf-8")
+        self.assertIn('BLUEPRINT_REVISION: ${BLUEPRINT_REVISION:-unknown}', compose)
+        self.assertNotIn("BLUEPRINT_DATABASE_URL", self.template["Parameters"])
+        self.assertNotIn("Fn::ImportValue", self.template_text)
+        self.assertNotIn("!ImportValue", self.template_text)
+
+    def test_global_and_iam_names_are_stack_generated(self):
+        resources = self.template["Resources"]
+        self.assertNotIn("RoleName", resources["InstanceRole"]["Properties"])
+        self.assertNotIn("InstanceProfileName", resources["InstanceProfile"]["Properties"])
+        distribution = resources["CloudFrontDistribution"]["Properties"]["DistributionConfig"]
+        self.assertNotIn("Aliases", distribution)
+        self.assertNotIn("Name", resources["ElasticIp"]["Properties"])
+
+    def test_security_controls_remain_per_environment(self):
+        resources = self.template["Resources"]
+        metadata = resources["Instance"]["Properties"]["MetadataOptions"]
+        self.assertEqual(metadata, {"HttpEndpoint": "enabled", "HttpTokens": "required"})
+        ingress = resources["SecurityGroup"]["Properties"]["SecurityGroupIngress"]
+        self.assertEqual(ingress[0]["SourcePrefixListId"], {"Ref": "CloudFrontPrefixListId"})
+        policies = resources["InstanceRole"]["Properties"]["ManagedPolicyArns"]
+        self.assertEqual(policies, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
+        self.assertTrue(self.template["Parameters"]["OriginVerifyToken"]["NoEcho"])
 
 
 class BootstrapSignals(unittest.TestCase):
