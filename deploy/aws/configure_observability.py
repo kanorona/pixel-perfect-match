@@ -280,6 +280,7 @@ PY"""
         [
             "test -f /opt/blueprint/otel/ca.crt -a -f /opt/blueprint/otel/client.crt -a -f /opt/blueprint/otel/client.key",
             "test -f /opt/blueprint/.env && test $(stat -c %a /opt/blueprint/.env) = 600",
+            "chown 1000:1000 /opt/blueprint/otel && chmod 0500 /opt/blueprint/otel",
             "chown 1000:1000 /opt/blueprint/otel/ca.crt /opt/blueprint/otel/client.crt /opt/blueprint/otel/client.key",
             "chmod 0444 /opt/blueprint/otel/ca.crt /opt/blueprint/otel/client.crt",
             "chmod 0400 /opt/blueprint/otel/client.key",
