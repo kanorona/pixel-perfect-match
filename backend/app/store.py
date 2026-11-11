@@ -241,14 +241,28 @@ class DatabaseStore:
             row = db.scalar(select(SessionRow).where(SessionRow.candidate_token == token))
             return row.public() if row else None
 
-    def save_candidate_canvas(self, token: str, canvas: dict) -> bool:
+    @staticmethod
+    def _canvas_element_ids(canvas: dict) -> set[str]:
+        elements = canvas.get("elements", [])
+        if not isinstance(elements, list):
+            return set()
+        return {
+            str(element["id"])
+            for element in elements
+            if isinstance(element, dict) and element.get("id") is not None
+        }
+
+    def save_candidate_canvas(self, token: str, canvas: dict) -> tuple[bool, int]:
         with self.Session.begin() as db:
             row = db.scalar(select(SessionRow).where(SessionRow.candidate_token == token))
             if not row or row.status != "live" or row.candidate_editing_locked:
-                return False
+                return False, 0
+            created_elements = len(
+                self._canvas_element_ids(canvas) - self._canvas_element_ids(row.canvas)
+            )
             row.canvas = canvas
             row.updated_at = now()
-            return True
+            return True, created_elements
 
     def session_exists(self, session_id: str) -> bool:
         with self.Session() as db:

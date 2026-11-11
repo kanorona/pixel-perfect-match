@@ -11,20 +11,29 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth import ApiError, AuthService
+from app.metrics import ApplicationMetrics
 from app.routers import auth, realtime, rpc, sessions
 from app.store import DatabaseStore
+from app.telemetry import configure_telemetry, shutdown_telemetry
 
 
 def create_app(database_url: str | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        yield
-        app.state.store.close()
+        try:
+            yield
+        finally:
+            app.state.store.close()
+            shutdown_telemetry(app)
 
     app = FastAPI(title="Blueprint local backend", version="0.1.0", lifespan=lifespan)
     app.state.store = DatabaseStore(database_url)
     app.state.auth = AuthService(app.state.store)
-    app.state.hub = realtime.RoomHub()
+    configure_telemetry(app)
+    app.state.metrics = ApplicationMetrics(
+        app.state.otel_meter_provider.get_meter("blueprint.application")
+    )
+    app.state.hub = realtime.RoomHub(app.state.metrics)
 
     app.add_middleware(
         CORSMiddleware,

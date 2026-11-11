@@ -1,0 +1,73 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins: []
+  postgresql:
+    endpoint: ${env:POSTGRESQL_ENDPOINT}
+    username: ${env:POSTGRESQL_USERNAME}
+    password: ${env:POSTGRESQL_PASSWORD}
+    databases: ["${env:POSTGRESQL_DATABASE}"]
+    collection_interval: 15s
+    tls:
+      insecure: true
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  redaction:
+    allow_all_keys: true
+    blocked_key_patterns:
+      - "(?i).*(token|password|authorization|api[_-]?key).*"
+    summary: silent
+    db_sanitizer:
+      sanitize_span_name: true
+      sql:
+        enabled: true
+        attributes: ["db.statement", "db.query", "db.query.text"]
+  batch:
+    timeout: 2s
+    send_batch_size: 512
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_constant_labels:
+      included: ["service.name", "deployment.environment.name", "service.version"]
+  otlp_http/tempo:
+    endpoint: http://tempo:4318
+    tls:
+      insecure: true
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, redaction, batch]
+      exporters: [otlp_http/tempo]
+    metrics:
+      receivers: [otlp, postgresql]
+      processors: [memory_limiter, redaction, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, redaction, batch]
+      exporters: [otlp_http/loki]
+  telemetry:
+    logs:
+      level: info

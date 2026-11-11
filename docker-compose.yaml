@@ -23,6 +23,8 @@ services:
       BLUEPRINT_DATABASE_URL: postgresql://sdip:sdip@db:5432/sdip
       BLUEPRINT_ENV: development
       BLUEPRINT_SEED_DEMO: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
     ports:
       - "127.0.0.1:8100:8001"
     networks:

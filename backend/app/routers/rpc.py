@@ -23,5 +23,12 @@ def get_session_by_token(body: TokenRequest, request: Request) -> list[dict]:
 @router.post("/save_canvas_by_token")
 def save_canvas_by_token(body: CanvasSaveRequest, request: Request) -> bool:
     if len(json.dumps(body.canvas, separators=(",", ":")).encode("utf-8")) > 2_000_000:
+        request.app.state.metrics.component_creation_errors.add(1)
         raise ApiError(400, "Canvas too large", "canvas_too_large")
-    return store_from(request).save_candidate_canvas(body.token, body.canvas)
+    saved, created_elements = store_from(request).save_candidate_canvas(body.token, body.canvas)
+    if saved:
+        if created_elements:
+            request.app.state.metrics.canvas_elements_created.add(created_elements)
+    else:
+        request.app.state.metrics.component_creation_errors.add(1)
+    return saved

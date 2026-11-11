@@ -161,6 +161,29 @@ deployment. `make backend` and `make run` enable both local demo flags explicitl
 generic 503 on a database error. It never returns connection details. Docker
 health checks and the AWS startup check use this endpoint.
 
+## OpenTelemetry
+
+FastAPI HTTP requests are traced with the required resource attributes. The
+existing `BLUEPRINT_ENV` supplies `deployment.environment.name`, and the image's
+existing `BLUEPRINT_REVISION` supplies `service.version`. `service.name` defaults
+to `blueprint-backend` and may be overridden with `OTEL_SERVICE_NAME`.
+
+No exporter is attached unless `OTEL_EXPORTER_OTLP_ENDPOINT` or
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is explicitly set. The OTLP/HTTP exporter
+also reads the standard `OTEL_EXPORTER_OTLP_*` variables for headers,
+certificates, compression and timeouts. For example, a Collector accepting the
+standard OTLP/HTTP path can later be configured with:
+
+```powershell
+$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
+```
+
+For a trace-specific endpoint, include the signal path, for example
+`http://localhost:4318/v1/traces`. Set `OTEL_TRACES_EXPORTER=none` to explicitly
+disable export even when an endpoint exists. Request/response bodies and HTTP
+headers are not captured. Concrete URL paths and query strings are redacted;
+the stable route template remains available as `http.route`.
+
 ## Test
 
 ```sh

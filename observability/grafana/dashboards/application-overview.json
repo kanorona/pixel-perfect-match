@@ -1,0 +1,114 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "targets": [{"expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{deployment_environment_name=~\"$environment\",service_version=~\"$version\"}[5m]))", "legendFormat": "{{http_route}}", "refId": "A"}],
+      "title": "HTTP requests per second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le) (rate(http_server_request_duration_seconds_bucket{deployment_environment_name=~\"$environment\",service_version=~\"$version\"}[5m])))", "legendFormat": "P50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{deployment_environment_name=~\"$environment\",service_version=~\"$version\"}[5m])))", "legendFormat": "P95", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{deployment_environment_name=~\"$environment\",service_version=~\"$version\"}[5m])))", "legendFormat": "P99", "refId": "C"}
+      ],
+      "title": "HTTP latency percentiles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 8},
+      "id": 3,
+      "targets": [{"expr": "sum(rate(http_server_request_duration_seconds_count{deployment_environment_name=~\"$environment\",service_version=~\"$version\",http_response_status_code=~\"4..|5..\"}[5m])) / clamp_min(sum(rate(http_server_request_duration_seconds_count{deployment_environment_name=~\"$environment\",service_version=~\"$version\"}[5m])), 0.001)", "refId": "A"}],
+      "title": "HTTP error rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 8},
+      "id": 4,
+      "targets": [{"expr": "sum(postgresql_backends)", "refId": "A"}],
+      "title": "PostgreSQL active backends",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 8},
+      "id": 5,
+      "targets": [{"expr": "sum(rate(postgresql_commits_total[5m]))", "legendFormat": "commits", "refId": "A"}, {"expr": "sum(rate(postgresql_rollbacks_total[5m]))", "legendFormat": "rollbacks", "refId": "B"}],
+      "title": "PostgreSQL transactions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 15},
+      "id": 6,
+      "targets": [{"expr": "sum(blueprint_interview_rooms_created_total{deployment_environment_name=~\"$environment\",service_version=~\"$version\"})", "refId": "A"}],
+      "title": "Interview rooms created",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 15},
+      "id": 7,
+      "targets": [{"expr": "sum(blueprint_interview_participants_active{deployment_environment_name=~\"$environment\",service_version=~\"$version\"})", "refId": "A"}],
+      "title": "Active participants",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 15},
+      "id": 8,
+      "targets": [{"expr": "sum(blueprint_canvas_elements_created_total{deployment_environment_name=~\"$environment\",service_version=~\"$version\"})", "refId": "A"}],
+      "title": "Canvas elements created",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 15},
+      "id": 9,
+      "targets": [{"expr": "sum(blueprint_canvas_component_creation_errors_total{deployment_environment_name=~\"$environment\",service_version=~\"$version\"})", "refId": "A"}],
+      "title": "Component creation errors",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 21},
+      "id": 10,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"expr": "{service_name=\"blueprint-backend\", deployment_environment_name=~\"$environment\"} | json", "refId": "A"}],
+      "title": "Correlated application logs",
+      "type": "logs"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "tags": ["opentelemetry", "pixel-perfect-match"],
+  "templating": {
+    "list": [
+      {"name": "environment", "label": "Environment", "type": "query", "datasource": {"type": "prometheus", "uid": "prometheus"}, "query": {"query": "label_values(http_server_request_duration_seconds_count, deployment_environment_name)", "refId": "PrometheusVariableQueryEditor-Environment"}, "includeAll": true, "allValue": ".*", "refresh": 1, "current": {"text": "All", "value": "$__all"}},
+      {"name": "version", "label": "Version", "type": "query", "datasource": {"type": "prometheus", "uid": "prometheus"}, "query": {"query": "label_values(http_server_request_duration_seconds_count{deployment_environment_name=~\"$environment\"}, service_version)", "refId": "PrometheusVariableQueryEditor-Version"}, "includeAll": true, "allValue": ".*", "refresh": 1, "current": {"text": "All", "value": "$__all"}}
+    ]
+  },
+  "time": {"from": "now-30m", "to": "now"},
+  "timezone": "browser",
+  "title": "Pixel Perfect Match - Application Overview",
+  "uid": "pixel-perfect-overview",
+  "version": 1
+}

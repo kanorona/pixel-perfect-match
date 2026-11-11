@@ -1,0 +1,46 @@
+groups:
+  - name: pixel-perfect-match
+    rules:
+      # Tune the 10% threshold and 1m duration after establishing a traffic baseline.
+      - alert: HighHttpErrorRate
+        expr: |
+          sum by (deployment_environment_name, service_version) (
+            rate(http_server_request_duration_seconds_count{http_response_status_code=~"4..|5.."}[2m])
+          )
+          /
+          clamp_min(sum by (deployment_environment_name, service_version) (
+            rate(http_server_request_duration_seconds_count[2m])
+          ), 0.001) > 0.10
+        for: 1m
+        labels:
+          severity: warning
+          owner: application
+        annotations:
+          summary: HTTP error rate is above 10%
+          description: Review status codes, logs and traces for the affected environment and version.
+
+      # One second is intentionally conservative for the local exercise.
+      - alert: HighHttpLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le, deployment_environment_name, service_version) (
+              rate(http_server_request_duration_seconds_bucket[2m])
+            )
+          ) > 1
+        for: 1m
+        labels:
+          severity: warning
+          owner: application
+        annotations:
+          summary: HTTP P95 latency is above one second
+          description: Compare the slow traces with PostgreSQL and application metrics.
+
+      # Three failures in five minutes represents a repeated principal-operation failure.
+      - alert: RepeatedCanvasComponentCreationFailures
+        expr: increase(blueprint_canvas_component_creation_errors_total[5m]) >= 3
+        labels:
+          severity: warning
+          owner: application
+        annotations:
+          summary: Repeated canvas component persistence failures
+          description: Inspect correlated logs and traces before changing application state.

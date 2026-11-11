@@ -1,0 +1,419 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private, single-node observability platform for Pixel Perfect Match.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    why: Run the validated open-source observability stack at minimum cost on one Graviton instance.
+    must:
+      - Keep Grafana reachable only through SSM port forwarding.
+      - Keep OTLP on the fixed private address and require mutual TLS.
+      - Do not create the Production return route or change the Production application.
+      - Retain the encrypted data volume if the stack is deleted or replaced.
+
+Parameters:
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+  InstanceType:
+    Type: String
+    Default: t4g.small
+    AllowedValues: [t4g.small]
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: us-east-2a
+  DevelopmentVpcId:
+    Type: AWS::EC2::VPC::Id
+  DevelopmentRouteTableId:
+    Type: String
+  DevelopmentSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  ProductionVpcId:
+    Type: AWS::EC2::VPC::Id
+  ProductionSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.44.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - {Key: Name, Value: blueprint-observability}
+        - {Key: Project, Value: PixelPerfectMatch}
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - {Key: Name, Value: blueprint-observability}
+        - {Key: Project, Value: PixelPerfectMatch}
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.44.0.0/24
+      AvailabilityZone: !Ref AvailabilityZone
+      MapPublicIpOnLaunch: true
+      Tags:
+        - {Key: Name, Value: blueprint-observability}
+        - {Key: Project, Value: PixelPerfectMatch}
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - {Key: Name, Value: blueprint-observability}
+        - {Key: Project, Value: PixelPerfectMatch}
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref RouteTable
+
+  DevelopmentPeering:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref Vpc
+      PeerVpcId: !Ref DevelopmentVpcId
+      Tags:
+        - {Key: Name, Value: blueprint-observability-development}
+        - {Key: Project, Value: PixelPerfectMatch}
+
+  ProductionPeering:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref Vpc
+      PeerVpcId: !Ref ProductionVpcId
+      Tags:
+        - {Key: Name, Value: blueprint-observability-production}
+        - {Key: Project, Value: PixelPerfectMatch}
+
+  DevelopmentReturnRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref DevelopmentRouteTableId
+      DestinationCidrBlock: 10.44.0.0/16
+      VpcPeeringConnectionId: !Ref DevelopmentPeering
+
+  RouteToDevelopment:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 10.42.0.0/16
+      VpcPeeringConnectionId: !Ref DevelopmentPeering
+
+  RouteToProduction:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 10.43.0.0/16
+      VpcPeeringConnectionId: !Ref ProductionPeering
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: No public ingress; OTLP is granted separately from application security groups.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - {Key: Name, Value: blueprint-observability}
+        - {Key: Project, Value: PixelPerfectMatch}
+
+  DevelopmentOtlpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: DevelopmentPeering
+    Properties:
+      GroupId: !Ref InstanceSecurityGroup
+      IpProtocol: tcp
+      FromPort: 4318
+      ToPort: 4318
+      SourceSecurityGroupId: !Ref DevelopmentSecurityGroupId
+      Description: mTLS OTLP HTTP from Development only
+
+  ProductionOtlpIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: ProductionPeering
+    Properties:
+      GroupId: !Ref InstanceSecurityGroup
+      IpProtocol: tcp
+      FromPort: 4318
+      ToPort: 4318
+      SourceSecurityGroupId: !Ref ProductionSecurityGroupId
+      Description: Reserved for mTLS OTLP HTTP from Production
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: PublishHostMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: PixelPerfect/Observability
+              - Effect: Allow
+                Action: [ec2:DescribeTags, ec2:DescribeVolumes]
+                Resource: '*'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Ref PublicSubnet
+      PrivateIpAddress: 10.44.0.10
+      SecurityGroupIds: [!Ref InstanceSecurityGroup]
+      CreditSpecification: {CPUCredits: standard}
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+        HttpPutResponseHopLimit: 2
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - {Key: Name, Value: blueprint-observability}
+        - {Key: Project, Value: PixelPerfectMatch}
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > >(tee /var/log/observability-bootstrap.log | logger -t observability-bootstrap -s 2>/dev/console) 2>&1
+          dnf install -y docker amazon-cloudwatch-agent jq openssl
+          systemctl enable --now docker
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl --fail --location --retry 3 https://github.com/docker/compose/releases/download/v2.40.3/docker-compose-linux-aarch64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+
+          ROOT_SOURCE=$(findmnt -n -o SOURCE /)
+          ROOT_PARENT=$(lsblk -no PKNAME "$ROOT_SOURCE")
+          for attempt in $(seq 1 30); do
+            DATA_DEVICE=$(lsblk -dpno NAME,TYPE | awk -v root="/dev/$ROOT_PARENT" '$2=="disk" && $1!=root {print $1; exit}')
+            [ -n "$DATA_DEVICE" ] && break
+            sleep 2
+          done
+          test -b "$DATA_DEVICE"
+          if ! blkid "$DATA_DEVICE"; then mkfs.xfs -f "$DATA_DEVICE"; fi
+          mkdir -p /opt/observability-data
+          DATA_UUID=$(blkid -s UUID -o value "$DATA_DEVICE")
+          grep -q "$DATA_UUID" /etc/fstab || echo "UUID=$DATA_UUID /opt/observability-data xfs defaults,nofail 0 2" >> /etc/fstab
+          mount -a
+          mkdir -p /opt/observability-data/{prometheus,loki,tempo,grafana,pki,secrets}
+          chown -R 65534:65534 /opt/observability-data/prometheus
+          chown -R 10001:10001 /opt/observability-data/loki /opt/observability-data/tempo
+          chown -R 472:472 /opt/observability-data/grafana
+
+          if [ ! -f /opt/observability-data/pki/ca.crt ]; then
+            openssl genrsa -out /opt/observability-data/pki/ca.key 3072
+            openssl req -x509 -new -key /opt/observability-data/pki/ca.key -sha256 -days 3650 -subj '/CN=Pixel Perfect Match Observability CA' -out /opt/observability-data/pki/ca.crt
+            openssl genrsa -out /opt/observability-data/pki/server.key 2048
+            openssl req -new -key /opt/observability-data/pki/server.key -subj '/CN=10.44.0.10' -out /tmp/server.csr
+            printf 'subjectAltName=IP:10.44.0.10\nextendedKeyUsage=serverAuth\n' >/tmp/server.ext
+            openssl x509 -req -in /tmp/server.csr -CA /opt/observability-data/pki/ca.crt -CAkey /opt/observability-data/pki/ca.key -CAcreateserial -out /opt/observability-data/pki/server.crt -days 825 -sha256 -extfile /tmp/server.ext
+            chmod 0600 /opt/observability-data/pki/*.key
+          fi
+          if [ ! -f /opt/observability-data/secrets/grafana.env ]; then
+            printf 'GF_SECURITY_ADMIN_PASSWORD=%s\n' "$(openssl rand -base64 30 | tr -d '\n')" >/opt/observability-data/secrets/grafana.env
+            chmod 0600 /opt/observability-data/secrets/grafana.env
+          fi
+
+          cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CWCONFIG'
+          {
+            "agent": {"metrics_collection_interval": 60},
+            "metrics": {
+              "namespace": "PixelPerfect/Observability",
+              "append_dimensions": {"InstanceId": "${aws:InstanceId}"},
+              "metrics_collected": {
+                "mem": {"measurement": ["mem_used_percent"]},
+                "disk": {"measurement": ["used_percent"], "resources": ["/opt/observability-data"], "drop_device": true}
+              }
+            }
+          }
+          CWCONFIG
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+          touch /var/lib/observability-bootstrap-ready
+
+  DataVolume:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      Size: 20
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - {Key: Name, Value: blueprint-observability-data}
+        - {Key: Project, Value: PixelPerfectMatch}
+        - {Key: Backup, Value: blueprint-observability}
+
+  DataVolumeAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdf
+      InstanceId: !Ref Instance
+      VolumeId: !Ref DataVolume
+
+  DlmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: dlm.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ManageTaggedSnapshots
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ec2:CreateSnapshot, ec2:CreateSnapshots, ec2:DeleteSnapshot, ec2:DescribeVolumes, ec2:DescribeSnapshots]
+                Resource: '*'
+              - Effect: Allow
+                Action: [ec2:CreateTags]
+                Resource: arn:aws:ec2:*::snapshot/*
+
+  SnapshotPolicy:
+    Type: AWS::DLM::LifecyclePolicy
+    Properties:
+      Description: Daily encrypted data volume snapshots retained for seven days
+      ExecutionRoleArn: !GetAtt DlmRole.Arn
+      State: ENABLED
+      PolicyDetails:
+        ResourceTypes: [VOLUME]
+        TargetTags:
+          - {Key: Backup, Value: blueprint-observability}
+        Schedules:
+          - Name: Daily
+            CopyTags: true
+            CreateRule:
+              Interval: 24
+              IntervalUnit: HOURS
+              Times: ['03:00']
+            RetainRule: {Count: 7}
+
+  StatusCheckSystemAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Observability EC2 system status check failed.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_System
+      Dimensions: [{Name: InstanceId, Value: !Ref Instance}]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: missing
+
+  StatusCheckInstanceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Observability EC2 instance status check failed.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_Instance
+      Dimensions: [{Name: InstanceId, Value: !Ref Instance}]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: missing
+
+  MemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Host memory usage is above 85 percent for five minutes.
+      Namespace: PixelPerfect/Observability
+      MetricName: mem_used_percent
+      Dimensions: [{Name: InstanceId, Value: !Ref Instance}]
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+
+  StorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Observability data volume usage is above 80 percent for five minutes.
+      Namespace: PixelPerfect/Observability
+      MetricName: disk_used_percent
+      Dimensions:
+        - {Name: InstanceId, Value: !Ref Instance}
+        - {Name: path, Value: /opt/observability-data}
+        - {Name: fstype, Value: xfs}
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+
+Outputs:
+  InstanceId:
+    Value: !Ref Instance
+  CollectorEndpoint:
+    Value: https://10.44.0.10:4318
+  GrafanaPortForwardingCommand:
+    Value: !Sub 'aws ssm start-session --target ${Instance} --document-name AWS-StartPortForwardingSession --parameters portNumber=3000,localPortNumber=3000 --region ${AWS::Region}'
+  DevelopmentPeeringId:
+    Value: !Ref DevelopmentPeering
+  ProductionPeeringId:
+    Value: !Ref ProductionPeering
+    Description: Production return route and application configuration intentionally not created.
+  DataVolumeId:
+    Value: !Ref DataVolume

@@ -7,6 +7,7 @@ from secrets import token_hex
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 
 from app.auth import ApiError, PUBLIC_KEY, require_api_key, store_from
+from app.metrics import ApplicationMetrics
 from app.models import BroadcastRequest
 
 router = APIRouter(tags=["Realtime"])
@@ -63,11 +64,13 @@ async def receive_message(socket: WebSocket) -> list:
 
 
 class RoomHub:
-    def __init__(self) -> None:
+    def __init__(self, metrics: ApplicationMetrics) -> None:
         self.rooms: dict[str, list[Client]] = {}
+        self.metrics = metrics
 
     async def join(self, client: Client) -> None:
         self.rooms.setdefault(client.room, []).append(client)
+        self.metrics.active_participants.add(1)
         state = {
             member.key: {"metas": [{**member.peer, "phx_ref": member.phx_ref}]}
             for member in self.rooms[client.room]
@@ -79,6 +82,7 @@ class RoomHub:
         members = self.rooms.get(client.room, [])
         if client in members:
             members.remove(client)
+            self.metrics.active_participants.add(-1)
         if client.key and client.peer:
             await self._presence_diff(client, joins={}, leaves={
                 client.key: {"metas": [{**client.peer, "phx_ref": client.phx_ref}]}

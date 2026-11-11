@@ -65,6 +65,7 @@ def create_session(
     if body.owner_id != user.id:
         raise ApiError(403, "Cannot create another user's session", "forbidden")
     row = store_from(request).create_session(body)
+    request.app.state.metrics.interview_rooms_created.add(1)
     data = {"id": row["id"]} if select == "id" else row
     return JSONResponse(data, status_code=201, media_type=OBJECT_MEDIA if wants_object(request) else "application/json")
 

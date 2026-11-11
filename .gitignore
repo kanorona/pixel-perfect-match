@@ -26,6 +26,7 @@ dist-ssr
 *.local
 /.env
 /deploy/aws/*.parameters.json
+/observability/local.env
 
 # Wrangler / Cloudflare
 .wrangler/
