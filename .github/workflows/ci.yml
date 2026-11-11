@@ -11,7 +11,7 @@ permissions:
 
 # A deployment must finish before the next main run can deploy.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-v2-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
