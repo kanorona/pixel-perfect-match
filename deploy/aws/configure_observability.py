@@ -249,6 +249,7 @@ from pathlib import Path
 
 path = Path('/opt/blueprint/.env')
 updates = {
+    'BLUEPRINT_ENV': 'development',
     'OTEL_EXPORTER_OTLP_ENDPOINT': 'https://10.44.0.10:4318',
     'OTEL_EXPORTER_OTLP_PROTOCOL': 'http/protobuf',
     'OTEL_EXPORTER_OTLP_CERTIFICATE': '/run/otel/ca.crt',
