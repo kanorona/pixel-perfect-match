@@ -52,9 +52,11 @@ Resources:
   GitHubProvider:
     Type: AWS::IAM::OIDCProvider
     Condition: CreateProvider
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Metadata:
       com.aws.cloudformation.Context:
-        why: Temporary federation without long-lived AWS keys in GitHub.
+        why: Shared federation without long-lived AWS keys in GitHub; retain for reuse by future projects.
         must: [Reuse an existing shared provider instead of replacing it.]
     Properties:
       Url: https://token.actions.githubusercontent.com

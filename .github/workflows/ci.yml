@@ -1,9 +1,8 @@
 name: CI and deployment
 
+# Pixel Perfect Match is archived. Keep the workflow reusable, but require an
+# explicit manual start so pushes cannot recreate or redeploy AWS environments.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:

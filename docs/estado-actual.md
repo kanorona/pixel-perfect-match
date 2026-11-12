@@ -1,5 +1,17 @@
 # Punto de continuación
 
+## Cierre de los entornos AWS — 12 de noviembre de 2026
+
+Pixel Perfect Match quedó archivado como proyecto educativo. Se eliminaron los
+stacks AWS de Development, Production, observabilidad, CI y registro, junto con
+sus datos PostgreSQL, telemetría persistente, snapshot e imágenes ECR. Se
+conservó únicamente el proveedor OIDC compartido de GitHub para reutilizarlo en
+proyectos posteriores. El workflow principal permanece disponible, pero solo
+puede iniciarse manualmente para impedir redepliegues accidentales.
+
+El código, las pruebas, las plantillas CloudFormation, los workflows y la
+documentación permanecen en el repositorio como referencia para SpatialTwin.
+
 Este proyecto es un ejercicio de clase. El frontend en `frontend/` usa el SDK
 de Supabase, y el backend FastAPI en `backend/` reproduce las rutas que ese SDK
 necesita. La especificación está en `openapi.yaml`; `docs/spec.md` explica las
